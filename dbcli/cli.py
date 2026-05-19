@@ -17,6 +17,13 @@ from dbcli.output import (
 )
 from dbcli.profiles import add_profile, list_profiles, remove_profile
 from dbcli.project import init_project, load_project_config
+from dbcli.recipes import (
+    dump_recipe_dict,
+    format_recipe_summary,
+    list_recipe_summaries,
+    load_recipe,
+    write_starter_recipe,
+)
 from dbcli.source import format_inspection, inspect_source
 
 
@@ -129,6 +136,8 @@ def _emit_success(
     no_progress: bool,
     ci: bool,
     profile: str | None = None,
+    table: str | None = None,
+    mode: str | None = None,
     extra: dict[str, object] | None = None,
     human_stdout: str | None = None,
 ) -> None:
@@ -142,6 +151,8 @@ def _emit_success(
         status="success",
         command=command,
         profile=profile,
+        table=table,
+        mode=mode,
         exit_code=int(ExitCode.SUCCESS),
     )
     if extra:
@@ -321,8 +332,32 @@ def scan(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    del file, sheet, table, profile, encoding, delimiter
-    _not_implemented(ctx, "scan", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        recipe_path, recipe = write_starter_recipe(
+            file,
+            sheet=sheet,
+            table=table,
+            profile=profile,
+            encoding=encoding,
+            delimiter=delimiter,
+        )
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "scan", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    _emit_success(
+        ctx,
+        "scan",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        profile=recipe.target.get("profile"),
+        table=recipe.target.get("table"),
+        mode=recipe.target.get("mode"),
+        extra={
+            "recipe_path": str(recipe_path),
+            "recipe_data": recipe.to_dict(),
+        },
+        human_stdout=str(recipe_path),
+    )
 
 
 @recipes_app.command("list")
@@ -332,7 +367,19 @@ def recipes_list(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    _not_implemented(ctx, "recipes list", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        summaries = list_recipe_summaries()
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "recipes list", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    _emit_success(
+        ctx,
+        "recipes list",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        extra={"recipes": [summary.to_dict() for summary in summaries]},
+        human_stdout=format_recipe_summary(summaries),
+    )
 
 
 @recipes_app.command("show")
@@ -343,8 +390,22 @@ def recipes_show(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    del name
-    _not_implemented(ctx, "recipes show", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        recipe = load_recipe(name)
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "recipes show", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    _emit_success(
+        ctx,
+        "recipes show",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        profile=recipe.target.get("profile"),
+        table=recipe.target.get("table"),
+        mode=recipe.target.get("mode"),
+        extra={"recipe_data": recipe.to_dict(), "recipe_path": str(recipe.path) if recipe.path else None},
+        human_stdout=dump_recipe_dict(recipe.to_dict()),
+    )
 
 
 @app.command()
