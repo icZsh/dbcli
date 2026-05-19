@@ -88,6 +88,20 @@ def test_run_load_append_sql_error_is_profile_error_and_does_not_commit_rows(tmp
     assert record["rows"]["loaded"] is None
 
 
+def test_run_load_replace_uses_replace_adapter_and_writes_loaded_rows(tmp_path: Path, monkeypatch) -> None:
+    paths = _project_with_recipe(tmp_path, monkeypatch, mode="replace")
+    adapter = _FakeReplaceAdapter()
+
+    result = run_load("sellers", paths=paths, adapter=adapter)
+
+    assert result.exit_code == 0
+    assert result.rows["loaded"] == 2
+    assert adapter.calls == [("dim_sellers", ["seller_id", "tier"], 2, result.run_id)]
+    record = read_run_records(paths=paths)[0]
+    assert record["mode"] == "replace"
+    assert record["rows"]["loaded"] == 2
+
+
 def test_load_cli_emits_json_and_writes_history(monkeypatch) -> None:
     adapter = _FakeAppendAdapter()
 
@@ -122,9 +136,10 @@ def _project_with_recipe(
     monkeypatch: Any,
     *,
     schema: str | None = None,
+    mode: str = "append",
 ) -> ProjectPaths:
     paths, _ = init_project(root)
-    _write_project_files(root, schema=schema or _default_schema())
+    _write_project_files(root, schema=schema or _default_schema(), mode=mode)
     add_profile(
         "dev",
         host="localhost",
@@ -138,7 +153,7 @@ def _project_with_recipe(
     return paths
 
 
-def _write_project_files(root: Path, *, schema: str) -> None:
+def _write_project_files(root: Path, *, schema: str, mode: str = "append") -> None:
     paths, _ = init_project(root)
     data_dir = root / "data"
     data_dir.mkdir(exist_ok=True)
@@ -152,7 +167,7 @@ source:
 target:
   profile: dev
   table: dim_sellers
-  mode: append
+  mode: {mode}
 {schema}edits:
   - cast: {{seller_id: {{type: int}}}}
 options:
@@ -184,4 +199,22 @@ class _FakeAppendAdapter:
         if self.error:
             raise self.error
         self.rows.extend(dataframe.to_dicts())
+        return dataframe.height
+
+
+class _FakeReplaceAdapter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[str], int, str]] = []
+
+    def replace_rows(
+        self,
+        table: str,
+        schema: list[Any],
+        dataframe: pl.DataFrame,
+        settings: Any,
+        *,
+        run_id: str,
+    ) -> int:
+        self.calls.append((table, [column.name for column in schema], dataframe.height, run_id))
+        assert settings.batch_size == 2
         return dataframe.height

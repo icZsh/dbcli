@@ -322,6 +322,56 @@ class SqlAlchemyMysqlAdapter:
                     raise schema_drift_error(table, diffs)
             return insert_dataframe(connection, table, schema, dataframe, settings.batch_size)
 
+    def replace_rows(
+        self,
+        table: str,
+        schema: list[SchemaColumn],
+        dataframe: pl.DataFrame,
+        settings: ResolvedSettings,
+        *,
+        run_id: str,
+    ) -> int:
+        staging = companion_table_name(table, "staging", run_id)
+        backup = companion_table_name(table, "backup", run_id)
+        live_exists = False
+        swapped = False
+        try:
+            with self.engine.begin() as connection:
+                live_exists = fetch_table_info(connection, table, default_schema=self.profile.database) is not None
+                connection.execute(
+                    text(
+                        create_table_sql(
+                            staging,
+                            schema,
+                            charset=settings.charset,
+                            collation=settings.collation,
+                            engine=settings.engine,
+                        )
+                    )
+                )
+                loaded = insert_dataframe(connection, staging, schema, dataframe, settings.batch_size)
+
+            with self.engine.begin() as connection:
+                if live_exists:
+                    connection.execute(text(rename_tables_sql([(table, backup), (staging, table)])))
+                    swapped = True
+                    connection.execute(text(drop_table_sql(backup)))
+                else:
+                    connection.execute(text(rename_tables_sql([(staging, table)])))
+                    swapped = True
+            return loaded
+        except SQLAlchemyError:
+            if not swapped:
+                self._drop_table_quietly(staging)
+            raise
+
+    def _drop_table_quietly(self, table: str) -> None:
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(text(drop_table_sql(table)))
+        except SQLAlchemyError:
+            return
+
 
 def fetch_table_info(connection: Any, table: str, *, default_schema: str) -> MysqlTableInfo | None:
     parsed = parse_identifier(table)
@@ -386,6 +436,56 @@ def insert_dataframe(
     for start in range(0, len(rows), batch_size):
         connection.execute(sql, rows[start : start + batch_size])
     return len(rows)
+
+
+def companion_table_name(table: str, role: str, run_id: str) -> str:
+    parsed = parse_identifier(table)
+    if role not in {"staging", "backup"}:
+        raise DbcliError(
+            Diagnostic(
+                code="mysql.invalid_companion_table",
+                message="Companion table role must be staging or backup.",
+                path=None,
+                details={"role": role},
+            ),
+            ExitCode.USAGE_OR_DRIFT,
+        )
+    suffix = f"__dbcli_{role}__{run_id}"
+    available = MAX_IDENTIFIER_LENGTH - len(suffix)
+    if available <= 0:
+        raise DbcliError(
+            Diagnostic(
+                code="mysql.invalid_companion_table",
+                message="Run id leaves no room for a staging or backup table name.",
+                path=None,
+                details={"role": role},
+            ),
+            ExitCode.USAGE_OR_DRIFT,
+        )
+    base = parsed.name[:available]
+    companion = f"{base}{suffix}"
+    if parsed.schema:
+        return f"{parsed.schema}.{companion}"
+    return companion
+
+
+def rename_tables_sql(pairs: list[tuple[str, str]]) -> str:
+    if not pairs:
+        raise DbcliError(
+            Diagnostic(
+                code="mysql.invalid_rename",
+                message="At least one table rename pair is required.",
+                path=None,
+                details={},
+            ),
+            ExitCode.USAGE_OR_DRIFT,
+        )
+    fragments = [f"{quote_identifier(source)} TO {quote_identifier(target)}" for source, target in pairs]
+    return "RENAME TABLE " + ", ".join(fragments)
+
+
+def drop_table_sql(table: str) -> str:
+    return f"DROP TABLE IF EXISTS {quote_identifier(table)}"
 
 
 def _identifier_error(value: Any) -> DbcliError:

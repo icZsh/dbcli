@@ -14,12 +14,15 @@ from dbcli.mysql import (
     MysqlTableInfo,
     SqlAlchemyMysqlAdapter,
     check_profile_connection,
+    companion_table_name,
     compare_table_info,
     create_table_sql,
+    drop_table_sql,
     insert_sql,
     mysql_url,
     parse_identifier,
     quote_identifier,
+    rename_tables_sql,
 )
 from dbcli.profiles import ResolvedProfile
 from dbcli.project import ResolvedSettings
@@ -86,6 +89,24 @@ def test_create_table_and_insert_sql_are_safe_and_ordered() -> None:
     )
     assert insert_sql("analytics.dim_sellers", ["seller_id", "tier"]) == (
         "INSERT INTO `analytics`.`dim_sellers` (`seller_id`, `tier`) VALUES (:seller_id, :tier)"
+    )
+
+
+def test_replace_companion_and_rename_sql_are_safe() -> None:
+    run_id = "r_2026_05_19T12_00_00Z_abcd"
+    staging = companion_table_name("analytics.dim_sellers", "staging", run_id)
+    backup = companion_table_name("analytics.dim_sellers", "backup", run_id)
+
+    assert staging == "analytics.dim_sellers__dbcli_staging__r_2026_05_19T12_00_00Z_abcd"
+    assert backup == "analytics.dim_sellers__dbcli_backup__r_2026_05_19T12_00_00Z_abcd"
+    assert rename_tables_sql([("analytics.dim_sellers", backup), (staging, "analytics.dim_sellers")]) == (
+        "RENAME TABLE `analytics`.`dim_sellers` TO "
+        "`analytics`.`dim_sellers__dbcli_backup__r_2026_05_19T12_00_00Z_abcd`, "
+        "`analytics`.`dim_sellers__dbcli_staging__r_2026_05_19T12_00_00Z_abcd` TO "
+        "`analytics`.`dim_sellers`"
+    )
+    assert drop_table_sql(backup) == (
+        "DROP TABLE IF EXISTS `analytics`.`dim_sellers__dbcli_backup__r_2026_05_19T12_00_00Z_abcd`"
     )
 
 
@@ -192,6 +213,64 @@ def test_sqlalchemy_adapter_rolls_back_insert_failure() -> None:
     assert engine.connection.insert_batches == [[{"seller_id": 1, "tier": "A"}, {"seller_id": 2, "tier": "B"}]]
 
 
+def test_sqlalchemy_adapter_replace_swaps_and_drops_backup() -> None:
+    engine = _FakeReplaceEngine(table_exists=True)
+    adapter = SqlAlchemyMysqlAdapter(_profile(), engine=engine)  # type: ignore[arg-type]
+    schema = _seller_schema()
+
+    loaded = adapter.replace_rows(
+        "dim_sellers",
+        schema,
+        pl.DataFrame({"seller_id": [1, 2], "tier": ["A", "B"]}),
+        _settings(),
+        run_id="r_2026_05_19T12_00_00Z_abcd",
+    )
+
+    assert loaded == 2
+    assert any(sql.startswith("CREATE TABLE `dim_sellers__dbcli_staging__r_2026_05_19T12_00_00Z_abcd`") for sql in engine.connection.executed)
+    assert (
+        "RENAME TABLE `dim_sellers` TO `dim_sellers__dbcli_backup__r_2026_05_19T12_00_00Z_abcd`, "
+        "`dim_sellers__dbcli_staging__r_2026_05_19T12_00_00Z_abcd` TO `dim_sellers`"
+    ) in engine.connection.executed
+    assert "DROP TABLE IF EXISTS `dim_sellers__dbcli_backup__r_2026_05_19T12_00_00Z_abcd`" in engine.connection.executed
+
+
+def test_sqlalchemy_adapter_replace_missing_target_renames_staging_directly() -> None:
+    engine = _FakeReplaceEngine(table_exists=False)
+    adapter = SqlAlchemyMysqlAdapter(_profile(), engine=engine)  # type: ignore[arg-type]
+
+    adapter.replace_rows(
+        "dim_sellers",
+        _seller_schema(),
+        pl.DataFrame({"seller_id": [1], "tier": ["A"]}),
+        _settings(),
+        run_id="r_2026_05_19T12_00_00Z_abcd",
+    )
+
+    assert (
+        "RENAME TABLE `dim_sellers__dbcli_staging__r_2026_05_19T12_00_00Z_abcd` TO `dim_sellers`"
+    ) in engine.connection.executed
+    assert not any("__dbcli_backup__" in sql for sql in engine.connection.executed)
+
+
+def test_sqlalchemy_adapter_replace_cleans_staging_on_pre_swap_failure() -> None:
+    engine = _FakeReplaceEngine(table_exists=True, insert_error=OperationalError("INSERT", {}, Exception("boom")))
+    adapter = SqlAlchemyMysqlAdapter(_profile(), engine=engine)  # type: ignore[arg-type]
+
+    with pytest.raises(OperationalError):
+        adapter.replace_rows(
+            "dim_sellers",
+            _seller_schema(),
+            pl.DataFrame({"seller_id": [1, 2], "tier": ["A", "B"]}),
+            _settings(),
+            run_id="r_2026_05_19T12_00_00Z_abcd",
+        )
+
+    assert not any(sql.startswith("RENAME TABLE") for sql in engine.connection.executed)
+    assert "DROP TABLE IF EXISTS `dim_sellers__dbcli_staging__r_2026_05_19T12_00_00Z_abcd`" in engine.connection.executed
+    assert engine.transactions[0].rolled_back is True
+
+
 def test_profile_test_cli_resolves_env_and_never_prints_password(monkeypatch) -> None:
     calls: list[ResolvedProfile] = []
 
@@ -273,6 +352,26 @@ def _profile(password: str = "pw") -> ResolvedProfile:
         user="dbcli",
         password=password,
         database="ecom_dev",
+    )
+
+
+def _settings() -> ResolvedSettings:
+    return ResolvedSettings(
+        profile="dev",
+        batch_size=2,
+        reject_threshold=0.0,
+        charset="utf8mb4",
+        collation="utf8mb4_unicode_ci",
+        engine="InnoDB",
+    )
+
+
+def _seller_schema():
+    return parse_schema_columns(
+        [
+            {"name": "seller_id", "type": "BIGINT", "nullable": False},
+            {"name": "tier", "type": "VARCHAR(16)", "nullable": True},
+        ]
     )
 
 
@@ -383,3 +482,71 @@ class _FakeLoadEngine:
 
     def begin(self) -> _FakeTransaction:
         return self.transaction
+
+
+class _FakeReplaceConnection:
+    def __init__(self, *, table_exists: bool, insert_error: OperationalError | None = None) -> None:
+        self.table_exists = table_exists
+        self.insert_error = insert_error
+        self.executed: list[str] = []
+        self.insert_batches: list[list[dict[str, object]]] = []
+
+    def execute(self, statement: object, params: object | None = None) -> _FakeMappingResult:
+        sql = str(statement)
+        self.executed.append(sql)
+        if "information_schema.TABLES" in sql:
+            rows = [{"ENGINE": "InnoDB", "TABLE_COLLATION": "utf8mb4_unicode_ci"}] if self.table_exists else []
+            return _FakeMappingResult(rows)
+        if "information_schema.COLUMNS" in sql:
+            return _FakeMappingResult(
+                [
+                    {
+                        "COLUMN_NAME": "seller_id",
+                        "COLUMN_TYPE": "bigint(20)",
+                        "IS_NULLABLE": "NO",
+                        "CHARACTER_SET_NAME": None,
+                        "COLLATION_NAME": None,
+                        "ORDINAL_POSITION": 1,
+                    },
+                    {
+                        "COLUMN_NAME": "tier",
+                        "COLUMN_TYPE": "varchar(16)",
+                        "IS_NULLABLE": "YES",
+                        "CHARACTER_SET_NAME": "utf8mb4",
+                        "COLLATION_NAME": "utf8mb4_unicode_ci",
+                        "ORDINAL_POSITION": 2,
+                    },
+                ]
+            )
+        if sql.startswith("INSERT INTO"):
+            assert isinstance(params, list)
+            self.insert_batches.append(params)
+            if self.insert_error:
+                raise self.insert_error
+        return _FakeMappingResult([])
+
+
+class _FakeReplaceTransaction:
+    def __init__(self, connection: _FakeReplaceConnection) -> None:
+        self.connection = connection
+        self.committed = False
+        self.rolled_back = False
+
+    def __enter__(self) -> _FakeReplaceConnection:
+        return self.connection
+
+    def __exit__(self, exc_type: object, _exc: object, _tb: object) -> bool:
+        self.rolled_back = exc_type is not None
+        self.committed = exc_type is None
+        return False
+
+
+class _FakeReplaceEngine:
+    def __init__(self, *, table_exists: bool, insert_error: OperationalError | None = None) -> None:
+        self.connection = _FakeReplaceConnection(table_exists=table_exists, insert_error=insert_error)
+        self.transactions: list[_FakeReplaceTransaction] = []
+
+    def begin(self) -> _FakeReplaceTransaction:
+        transaction = _FakeReplaceTransaction(self.connection)
+        self.transactions.append(transaction)
+        return transaction
