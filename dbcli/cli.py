@@ -25,6 +25,7 @@ from dbcli.recipes import (
     write_starter_recipe,
 )
 from dbcli.source import format_inspection, inspect_source
+from dbcli.validation import format_validation_report, run_validate
 
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -416,8 +417,24 @@ def validate(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    del recipe
-    _not_implemented(ctx, "validate", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        result = run_validate(recipe)
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "validate", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    config = _resolve_config(ctx, json_output=json_output, no_progress=no_progress, ci=ci)
+    if not config.json_output:
+        typer.echo(format_validation_report(result))
+    emit_result(result.to_payload(), config)
+    if result.exit_code != ExitCode.SUCCESS:
+        log(
+            "error",
+            "validation failed",
+            config,
+            command="validate",
+            recipe=result.recipe,
+            exit_code=int(result.exit_code),
+        )
+        raise typer.Exit(result.exit_code)
 
 
 @app.command()
