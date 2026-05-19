@@ -29,12 +29,12 @@ def test_help_lists_core_commands() -> None:
 
 
 def test_json_flag_after_command_routes_payload_to_stdout_and_log_to_stderr() -> None:
-    result = runner.invoke(app, ["profile", "list", "--json", "--ci"])
+    result = runner.invoke(app, ["scan", "data.csv", "--json", "--ci"])
 
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
     assert payload["status"] == "failed"
-    assert payload["command"] == "profile list"
+    assert payload["command"] == "scan"
     assert payload["diagnostics"][0]["code"] == "internal.not_implemented"
     assert "level=error" in result.stderr
-    assert "command='profile list'" in result.stderr
+    assert "command=scan" in result.stderr
