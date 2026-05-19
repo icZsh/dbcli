@@ -3,13 +3,27 @@ from __future__ import annotations
 import json
 
 import pytest
+import polars as pl
 from sqlalchemy.exc import OperationalError
 from typer.testing import CliRunner
 
 from dbcli.cli import app
 from dbcli.errors import DbcliError
-from dbcli.mysql import check_profile_connection, mysql_url, parse_identifier, quote_identifier
+from dbcli.mysql import (
+    MysqlColumnInfo,
+    MysqlTableInfo,
+    SqlAlchemyMysqlAdapter,
+    check_profile_connection,
+    compare_table_info,
+    create_table_sql,
+    insert_sql,
+    mysql_url,
+    parse_identifier,
+    quote_identifier,
+)
 from dbcli.profiles import ResolvedProfile
+from dbcli.project import ResolvedSettings
+from dbcli.schema import parse_schema_columns
 
 
 runner = CliRunner()
@@ -54,6 +68,128 @@ def test_profile_connection_failure_is_sanitized() -> None:
     assert exc_info.value.diagnostic.code == "mysql.connection_failed"
     assert exc_info.value.diagnostic.details == {"profile": "dev", "error": "OperationalError"}
     assert "secret-password" not in exc_info.value.diagnostic.message
+
+
+def test_create_table_and_insert_sql_are_safe_and_ordered() -> None:
+    schema = parse_schema_columns(
+        [
+            {"name": "seller_id", "type": "BIGINT", "nullable": False},
+            {"name": "tier", "type": "VARCHAR(16)", "nullable": True},
+        ]
+    )
+
+    assert create_table_sql("analytics.dim_sellers", schema, charset="utf8mb4", collation="utf8mb4_unicode_ci", engine="InnoDB") == (
+        "CREATE TABLE `analytics`.`dim_sellers` (\n"
+        "  `seller_id` BIGINT NOT NULL,\n"
+        "  `tier` VARCHAR(16) NULL\n"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    )
+    assert insert_sql("analytics.dim_sellers", ["seller_id", "tier"]) == (
+        "INSERT INTO `analytics`.`dim_sellers` (`seller_id`, `tier`) VALUES (:seller_id, :tier)"
+    )
+
+
+def test_compare_table_info_normalizes_types_and_reports_drift() -> None:
+    schema = parse_schema_columns(
+        [
+            {"name": "seller_id", "type": "BIGINT", "nullable": False},
+            {"name": "active", "type": "BOOLEAN", "nullable": False},
+            {"name": "tier", "type": "VARCHAR(16)", "nullable": True},
+        ]
+    )
+    matching = MysqlTableInfo(
+        schema="ecom_dev",
+        name="dim_sellers",
+        engine="innodb",
+        charset="utf8mb4",
+        collation="utf8mb4_unicode_ci",
+        columns=[
+            MysqlColumnInfo("seller_id", "bigint(20)", False),
+            MysqlColumnInfo("active", "tinyint(1)", False),
+            MysqlColumnInfo("tier", "varchar(16)", True, charset="utf8mb4", collation="utf8mb4_unicode_ci"),
+        ],
+    )
+
+    assert compare_table_info(schema, matching, charset="utf8mb4", collation="utf8mb4_unicode_ci", engine="InnoDB") == []
+
+    drifted = MysqlTableInfo(
+        schema="ecom_dev",
+        name="dim_sellers",
+        engine="MyISAM",
+        charset="latin1",
+        collation="latin1_swedish_ci",
+        columns=[
+            MysqlColumnInfo("seller_id", "int(11)", False),
+            MysqlColumnInfo("tier", "varchar(32)", False, charset="latin1", collation="latin1_swedish_ci"),
+            MysqlColumnInfo("extra", "text", True),
+        ],
+    )
+
+    diffs = compare_table_info(schema, drifted, charset="utf8mb4", collation="utf8mb4_unicode_ci", engine="InnoDB")
+
+    assert [diff["check"] for diff in diffs] == [
+        "engine",
+        "charset",
+        "collation",
+        "missing_column",
+        "extra_column",
+        "type",
+        "type",
+        "nullability",
+        "column_charset",
+        "column_collation",
+    ]
+
+
+def test_sqlalchemy_adapter_rolls_back_insert_failure() -> None:
+    schema = parse_schema_columns(
+        [
+            {"name": "seller_id", "type": "BIGINT", "nullable": False},
+            {"name": "tier", "type": "VARCHAR(16)", "nullable": True},
+        ]
+    )
+    engine = _FakeLoadEngine(
+        table_rows=[{"ENGINE": "InnoDB", "TABLE_COLLATION": "utf8mb4_unicode_ci"}],
+        column_rows=[
+            {
+                "COLUMN_NAME": "seller_id",
+                "COLUMN_TYPE": "bigint(20)",
+                "IS_NULLABLE": "NO",
+                "CHARACTER_SET_NAME": None,
+                "COLLATION_NAME": None,
+                "ORDINAL_POSITION": 1,
+            },
+            {
+                "COLUMN_NAME": "tier",
+                "COLUMN_TYPE": "varchar(16)",
+                "IS_NULLABLE": "YES",
+                "CHARACTER_SET_NAME": "utf8mb4",
+                "COLLATION_NAME": "utf8mb4_unicode_ci",
+                "ORDINAL_POSITION": 2,
+            },
+        ],
+        insert_error=OperationalError("INSERT", {}, Exception("boom")),
+    )
+    adapter = SqlAlchemyMysqlAdapter(_profile(), engine=engine)  # type: ignore[arg-type]
+
+    with pytest.raises(OperationalError):
+        adapter.append_rows(
+            "dim_sellers",
+            schema,
+            pl.DataFrame({"seller_id": [1, 2], "tier": ["A", "B"]}),
+            ResolvedSettings(
+                profile="dev",
+                batch_size=2,
+                reject_threshold=0.0,
+                charset="utf8mb4",
+                collation="utf8mb4_unicode_ci",
+                engine="InnoDB",
+            ),
+        )
+
+    assert engine.transaction.rolled_back is True
+    assert engine.transaction.committed is False
+    assert engine.connection.insert_batches == [[{"seller_id": 1, "tier": "A"}, {"seller_id": 2, "tier": "B"}]]
 
 
 def test_profile_test_cli_resolves_env_and_never_prints_password(monkeypatch) -> None:
@@ -173,3 +309,77 @@ class _FakeEngine:
 
     def dispose(self) -> None:
         self.disposed = True
+
+
+class _FakeMappingResult:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+
+    def mappings(self) -> "_FakeMappingResult":
+        return self
+
+    def first(self) -> dict[str, object] | None:
+        return self.rows[0] if self.rows else None
+
+    def __iter__(self):
+        return iter(self.rows)
+
+
+class _FakeLoadConnection:
+    def __init__(
+        self,
+        *,
+        table_rows: list[dict[str, object]],
+        column_rows: list[dict[str, object]],
+        insert_error: OperationalError,
+    ) -> None:
+        self.table_rows = table_rows
+        self.column_rows = column_rows
+        self.insert_error = insert_error
+        self.insert_batches: list[list[dict[str, object]]] = []
+
+    def execute(self, statement: object, params: object | None = None) -> _FakeMappingResult:
+        sql = str(statement)
+        if "information_schema.TABLES" in sql:
+            return _FakeMappingResult(self.table_rows)
+        if "information_schema.COLUMNS" in sql:
+            return _FakeMappingResult(self.column_rows)
+        if sql.startswith("INSERT INTO"):
+            assert isinstance(params, list)
+            self.insert_batches.append(params)
+            raise self.insert_error
+        return _FakeMappingResult([])
+
+
+class _FakeTransaction:
+    def __init__(self, connection: _FakeLoadConnection) -> None:
+        self.connection = connection
+        self.committed = False
+        self.rolled_back = False
+
+    def __enter__(self) -> _FakeLoadConnection:
+        return self.connection
+
+    def __exit__(self, exc_type: object, _exc: object, _tb: object) -> bool:
+        self.rolled_back = exc_type is not None
+        self.committed = exc_type is None
+        return False
+
+
+class _FakeLoadEngine:
+    def __init__(
+        self,
+        *,
+        table_rows: list[dict[str, object]],
+        column_rows: list[dict[str, object]],
+        insert_error: OperationalError,
+    ) -> None:
+        self.connection = _FakeLoadConnection(
+            table_rows=table_rows,
+            column_rows=column_rows,
+            insert_error=insert_error,
+        )
+        self.transaction = _FakeTransaction(self.connection)
+
+    def begin(self) -> _FakeTransaction:
+        return self.transaction

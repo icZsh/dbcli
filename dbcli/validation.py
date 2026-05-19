@@ -60,10 +60,17 @@ class ValidationResult:
         }
 
 
-def run_validate(reference: str | Path, *, paths: ProjectPaths | None = None) -> ValidationResult:
+def run_validate(
+    reference: str | Path,
+    *,
+    paths: ProjectPaths | None = None,
+    run_id: str | None = None,
+    command: str = "validate",
+    started: datetime | None = None,
+) -> ValidationResult:
     paths = paths or find_project()
-    started = datetime.now(UTC)
-    run_id = mint_run_id(started)
+    started = started or datetime.now(UTC)
+    run_id = run_id or mint_run_id(started)
     recipe = load_recipe(reference, paths=paths)
     config = load_project_config(paths)
     settings = resolve_settings(config, recipe_target=recipe.target, recipe_options=recipe.options)
@@ -104,7 +111,7 @@ def run_validate(reference: str | Path, *, paths: ProjectPaths | None = None) ->
     duration_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
     return ValidationResult(
         status="success" if exit_code == ExitCode.SUCCESS else "failed",
-        command="validate",
+        command=command,
         run_id=run_id,
         recipe=recipe.name,
         profile=settings.profile,

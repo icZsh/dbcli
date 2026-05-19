@@ -8,6 +8,7 @@ import typer
 from dbcli import __version__
 from dbcli.errors import DbcliError, Diagnostic, ExitCode
 from dbcli.history import format_history, format_run_record, get_run_record, read_run_records
+from dbcli.load import format_load_report, run_load
 from dbcli.mysql import check_profile_connection
 from dbcli.output import (
     OutputConfig,
@@ -472,8 +473,24 @@ def load(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    del recipe
-    _not_implemented(ctx, "load", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        result = run_load(recipe)
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "load", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    config = _resolve_config(ctx, json_output=json_output, no_progress=no_progress, ci=ci)
+    if not config.json_output:
+        typer.echo(format_load_report(result))
+    emit_result(result.to_payload(), config)
+    if result.exit_code != ExitCode.SUCCESS:
+        log(
+            "error",
+            "load failed",
+            config,
+            command="load",
+            recipe=result.recipe,
+            exit_code=int(result.exit_code),
+        )
+        raise typer.Exit(result.exit_code)
 
 
 @app.command()
