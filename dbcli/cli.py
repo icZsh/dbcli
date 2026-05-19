@@ -6,7 +6,7 @@ from typing import Annotated
 import typer
 
 from dbcli import __version__
-from dbcli.errors import Diagnostic, ExitCode
+from dbcli.errors import DbcliError, Diagnostic, ExitCode
 from dbcli.output import (
     OutputConfig,
     build_output_config,
@@ -15,6 +15,8 @@ from dbcli.output import (
     merge_output_config,
     result_envelope,
 )
+from dbcli.profiles import add_profile, list_profiles, remove_profile
+from dbcli.project import init_project, load_project_config
 
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -118,6 +120,70 @@ def _not_implemented(
     raise typer.Exit(ExitCode.INTERNAL_ERROR)
 
 
+def _emit_success(
+    ctx: typer.Context,
+    command: str,
+    *,
+    json_output: bool,
+    no_progress: bool,
+    ci: bool,
+    profile: str | None = None,
+    extra: dict[str, object] | None = None,
+    human_stdout: str | None = None,
+) -> None:
+    config = _resolve_config(
+        ctx,
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+    )
+    payload = result_envelope(
+        status="success",
+        command=command,
+        profile=profile,
+        exit_code=int(ExitCode.SUCCESS),
+    )
+    if extra:
+        payload.update(extra)
+
+    if human_stdout and not config.json_output:
+        typer.echo(human_stdout, nl=not human_stdout.endswith("\n"))
+    emit_result(payload, config)
+
+
+def _emit_dbcli_error(
+    ctx: typer.Context,
+    command: str,
+    error: DbcliError,
+    *,
+    json_output: bool,
+    no_progress: bool,
+    ci: bool,
+) -> None:
+    config = _resolve_config(
+        ctx,
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+    )
+    payload = result_envelope(
+        status="failed",
+        command=command,
+        diagnostics=[error.diagnostic.to_dict()],
+        exit_code=int(error.exit_code),
+    )
+    emit_result(payload, config)
+    log(
+        "error",
+        "command failed",
+        config,
+        command=command,
+        diagnostic=error.diagnostic.code,
+        exit_code=int(error.exit_code),
+    )
+    raise typer.Exit(error.exit_code)
+
+
 @app.command()
 def init(
     ctx: typer.Context,
@@ -125,7 +191,23 @@ def init(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    _not_implemented(ctx, "init", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        paths, created = init_project()
+        load_project_config(paths)
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "init", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    _emit_success(
+        ctx,
+        "init",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        extra={
+            "project": str(paths.root),
+            "dbcli_dir": str(paths.dbcli_dir),
+            "created": created,
+        },
+    )
 
 
 @profile_app.command("add")
@@ -141,8 +223,26 @@ def profile_add(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    del name, host, user, database, password_env, port
-    _not_implemented(ctx, "profile add", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        profile = add_profile(
+            name,
+            host=host,
+            port=port,
+            user=user,
+            database=database,
+            password_env=password_env,
+        )
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "profile add", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    _emit_success(
+        ctx,
+        "profile add",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        profile=profile.name,
+        extra={"profile_data": profile.to_public_dict()},
+    )
 
 
 @profile_app.command("list")
@@ -152,7 +252,24 @@ def profile_list(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    _not_implemented(ctx, "profile list", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        profiles = [profile.to_public_dict() for profile in list_profiles()]
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "profile list", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+
+    lines = [
+        f"{profile['name']}\t{profile['user']}@{profile['host']}:{profile['port']}/{profile['database']}"
+        for profile in profiles
+    ]
+    _emit_success(
+        ctx,
+        "profile list",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        extra={"profiles": profiles},
+        human_stdout="\n".join(lines) if lines else "",
+    )
 
 
 @profile_app.command("remove")
@@ -163,8 +280,19 @@ def profile_remove(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    del name
-    _not_implemented(ctx, "profile remove", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        removed = remove_profile(name)
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "profile remove", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    _emit_success(
+        ctx,
+        "profile remove",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        profile=removed.name,
+        extra={"removed": removed.to_public_dict()},
+    )
 
 
 @profile_app.command("test")
