@@ -9,6 +9,8 @@ description = "Recipe-first CSV/XLSX to MySQL loading CLI."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "polars>=1.0,<2.0",
+  "python-calamine>=0.2,<1.0",
   "typer>=0.12,<1.0",
 ]
 

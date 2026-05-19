@@ -17,6 +17,7 @@ from dbcli.output import (
 )
 from dbcli.profiles import add_profile, list_profiles, remove_profile
 from dbcli.project import init_project, load_project_config
+from dbcli.source import format_inspection, inspect_source
 
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -381,8 +382,19 @@ def inspect(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    del file, sheet, encoding, delimiter
-    _not_implemented(ctx, "inspect", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        inspection = inspect_source(file, sheet=sheet, encoding=encoding, delimiter=delimiter)
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "inspect", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    _emit_success(
+        ctx,
+        "inspect",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        extra={"inspection": inspection.to_dict()},
+        human_stdout=format_inspection(inspection),
+    )
 
 
 @app.command()
