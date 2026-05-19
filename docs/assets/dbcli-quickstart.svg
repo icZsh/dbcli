@@ -1,0 +1,23 @@
+<svg width="960" height="520" viewBox="0 0 960 520" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">dbcli quickstart terminal demo</title>
+  <desc id="desc">A terminal screenshot showing dbcli init, scan, and validate commands running successfully.</desc>
+  <rect width="960" height="520" rx="16" fill="#0F172A"/>
+  <rect x="1" y="1" width="958" height="518" rx="15" stroke="#263449"/>
+  <rect x="24" y="22" width="912" height="476" rx="12" fill="#111827"/>
+  <circle cx="50" cy="48" r="7" fill="#F87171"/>
+  <circle cx="74" cy="48" r="7" fill="#FBBF24"/>
+  <circle cx="98" cy="48" r="7" fill="#34D399"/>
+  <text x="125" y="53" fill="#CBD5E1" font-family="Menlo, Consolas, monospace" font-size="15">dbcli quickstart</text>
+  <text x="48" y="95" fill="#38BDF8" font-family="Menlo, Consolas, monospace" font-size="17">$ dbcli init</text>
+  <text x="48" y="125" fill="#E5E7EB" font-family="Menlo, Consolas, monospace" font-size="17">init: success</text>
+  <text x="48" y="170" fill="#38BDF8" font-family="Menlo, Consolas, monospace" font-size="17">$ dbcli scan data/sellers.csv --table dim_sellers --profile dev --encoding utf-8 --delimiter ","</text>
+  <text x="48" y="200" fill="#E5E7EB" font-family="Menlo, Consolas, monospace" font-size="17">scan: success</text>
+  <text x="48" y="230" fill="#E5E7EB" font-family="Menlo, Consolas, monospace" font-size="17">.dbcli/recipes/dim_sellers.yaml</text>
+  <text x="48" y="275" fill="#38BDF8" font-family="Menlo, Consolas, monospace" font-size="17">$ dbcli validate dim_sellers</text>
+  <text x="48" y="305" fill="#E5E7EB" font-family="Menlo, Consolas, monospace" font-size="17">dim_sellers @ dev.dim_sellers (append)</text>
+  <text x="48" y="335" fill="#E5E7EB" font-family="Menlo, Consolas, monospace" font-size="17">  read:       3</text>
+  <text x="48" y="365" fill="#E5E7EB" font-family="Menlo, Consolas, monospace" font-size="17">  edited:     3   (0 edit rejects)</text>
+  <text x="48" y="395" fill="#E5E7EB" font-family="Menlo, Consolas, monospace" font-size="17">  validated:  3   (0 validate rejects)</text>
+  <text x="48" y="425" fill="#E5E7EB" font-family="Menlo, Consolas, monospace" font-size="17">  duration:   2ms</text>
+  <text x="48" y="455" fill="#22C55E" font-family="Menlo, Consolas, monospace" font-size="17">validate: success</text>
+</svg>

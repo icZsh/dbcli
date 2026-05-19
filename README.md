@@ -1,12 +1,22 @@
 # dbcli
 
-`dbcli` is a recipe-first CLI for loading CSV/XLSX files into MySQL tables. It reads one spreadsheet-like source, applies declared cleanup edits, validates the final dataframe against a MySQL schema, then either appends rows or atomically replaces the target table.
+`dbcli` is a small, recipe-first CLI for loading CSV/XLSX files into MySQL. It keeps spreadsheet ingestion explicit, validates rows before touching the database, and writes an auditable run history for every load.
 
-The full v1 contract lives in [SPEC.md](SPEC.md). The milestone build plan lives in [BUILD.md](BUILD.md).
+![dbcli quickstart demo](docs/assets/dbcli-quickstart.svg)
+
+Terminal demo from a local quickstart run: initialize a project, generate a recipe, and validate rows before loading.
+
+## Why dbcli
+
+- Preserve CSV values as strings until a recipe explicitly casts them.
+- Keep source cleanup, schema, target table, and load mode in one YAML recipe.
+- Validate edits, nullability, string lengths, numeric ranges, and schema shape before writing.
+- Load with `append` or atomic `replace` semantics.
+- Emit CI-friendly JSON, structured diagnostics, rejects CSVs, and `.dbcli/runs.jsonl` history.
 
 ## Install
 
-For local development:
+For development:
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -19,9 +29,9 @@ For an isolated CLI install from a checkout or built wheel:
 pipx install .
 ```
 
-## Project Setup
+## Setup
 
-Initialize a project from the directory that should own recipes and run history:
+Create a dbcli project in the directory that owns your data recipes:
 
 ```bash
 dbcli init
@@ -39,17 +49,7 @@ This creates:
 └── runs.jsonl
 ```
 
-Recommended `.gitignore` entries:
-
-```gitignore
-.dbcli/profiles.toml
-.dbcli/rejects/
-.dbcli/runs.jsonl
-```
-
-## Profiles
-
-Profiles live in `.dbcli/profiles.toml`. Passwords are always stored as environment-variable references, never literal secrets.
+Add a MySQL profile. Passwords are stored as environment-variable references, not literal secrets:
 
 ```bash
 dbcli profile add dev \
@@ -58,54 +58,43 @@ dbcli profile add dev \
   --database ecom_dev \
   --password-env DBCLI_DEV_PW
 
-export DBCLI_DEV_PW='...'
+export DBCLI_DEV_PW='your-password'
 dbcli profile test dev
 ```
 
-Missing password environment variables exit `30`. Literal passwords in the profile file are rejected.
+Recommended `.gitignore` entries:
 
-## Recipe Workflow
+```gitignore
+.dbcli/profiles.toml
+.dbcli/rejects/
+.dbcli/runs.jsonl
+```
 
-Inspect a source file:
+## Quickstart
 
-```bash
-dbcli inspect data/sellers.csv --encoding utf-8 --delimiter ","
+Given a CSV:
+
+```csv
+seller_id,tier
+001,VIP
+002,STD
+003,VIP
 ```
 
 Generate a starter recipe:
 
 ```bash
-dbcli scan data/sellers.csv --table dim_sellers --profile dev --encoding utf-8 --delimiter ","
+dbcli scan data/sellers.csv \
+  --table dim_sellers \
+  --profile dev \
+  --encoding utf-8 \
+  --delimiter ","
 ```
 
-Edit `.dbcli/recipes/dim_sellers.yaml` until the source, target, schema, edits, and options match the intended load.
-
-Validate without touching MySQL:
-
-```bash
-dbcli validate dim_sellers --ci --json
-```
-
-Load into MySQL:
-
-```bash
-dbcli load dim_sellers --ci --json
-```
-
-## Load Modes
-
-`append` creates the target table when it is missing, checks drift when it exists, and inserts rows in batches. Drift exits `2` with a `mysql.schema_drift` diagnostic.
-
-`replace` creates a staging table, loads rows into staging, then uses MySQL `RENAME TABLE` to swap staging into the target name. If the target exists, it is first renamed to a run-specific backup and the backup is dropped after a successful swap. Pre-swap failures clean up staging and leave the original target untouched.
-
-Both modes validate first and append one final run record to `.dbcli/runs.jsonl` on success or expected failure.
-
-## Recipes
-
-Minimal CSV recipe:
+Edit `.dbcli/recipes/dim_sellers.yaml`:
 
 ```yaml
-name: sellers
+name: dim_sellers
 source:
   path: data/sellers.csv
   encoding: utf-8
@@ -127,18 +116,74 @@ options:
   batch_size: 5000
 ```
 
-CSV recipes must declare `source.encoding` and `source.delimiter`. XLSX recipes use `source.sheet` when a workbook contains multiple sheets.
+Validate without connecting to MySQL:
 
-## Run History
+```bash
+dbcli validate dim_sellers
+```
 
-Only `load` writes run history. Inspect it with:
+Load into MySQL:
+
+```bash
+dbcli load dim_sellers
+```
+
+For CI, add `--ci --json`:
+
+```bash
+dbcli validate .dbcli/recipes/dim_sellers.yaml --ci --json
+dbcli load .dbcli/recipes/dim_sellers.yaml --ci --json
+```
+
+## Load Modes
+
+`append`
+
+- Creates the target table when it is missing.
+- Checks an existing table for schema drift.
+- Inserts rows in batches inside a transaction.
+- Exits `2` with `mysql.schema_drift` if the live table differs.
+
+`replace`
+
+- Creates a run-specific staging table.
+- Loads validated rows into staging.
+- Swaps staging into the target name with MySQL `RENAME TABLE`.
+- Drops the backup after a successful swap.
+- Cleans up staging on pre-swap failure and leaves the original target untouched.
+
+## Inspect Results
+
+Only `load` writes run history:
 
 ```bash
 dbcli history --limit 10
 dbcli show <run-id>
 ```
 
-Row-level edit and validation failures are written to `.dbcli/rejects/<run-id>.csv`. MySQL load failures are diagnostics, not reject rows.
+Row-level edit and validation failures are written to:
+
+```text
+.dbcli/rejects/<run-id>.csv
+```
+
+MySQL load failures are reported as structured diagnostics, not reject rows.
+
+## Common Commands
+
+```bash
+dbcli init
+dbcli profile add dev --host localhost --user dbcli --database ecom_dev --password-env DBCLI_DEV_PW
+dbcli profile test dev
+dbcli inspect data/sellers.csv --encoding utf-8 --delimiter ","
+dbcli scan data/sellers.csv --table dim_sellers --profile dev --encoding utf-8 --delimiter ","
+dbcli recipes list
+dbcli recipes show dim_sellers
+dbcli validate dim_sellers
+dbcli load dim_sellers
+dbcli history --limit 10
+dbcli show <run-id>
+```
 
 ## Exit Codes
 
@@ -151,18 +196,14 @@ Row-level edit and validation failures are written to `.dbcli/rejects/<run-id>.c
 | `30` | Profile, connection, or MySQL load error |
 | `1` | Unexpected internal error |
 
-## CI
-
-Suggested pull-request gate:
+## Development
 
 ```bash
-dbcli validate .dbcli/recipes/sellers.yaml --ci --json
+python -m pip install -e ".[dev]"
+python -m pytest
+python -m build
 ```
 
-Suggested merge/deploy gate:
+The GitHub Actions workflow in `.github/workflows/ci.yml` runs tests and package builds on Python 3.11 and 3.12.
 
-```bash
-dbcli load .dbcli/recipes/sellers.yaml --ci --json
-```
-
-The repository workflow in `.github/workflows/ci.yml` installs `.[dev]`, runs `python -m pytest`, and builds source/wheel distributions on Python 3.11 and 3.12.
+The full v1 contract lives in [SPEC.md](SPEC.md). The milestone build plan lives in [BUILD.md](BUILD.md).
