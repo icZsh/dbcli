@@ -8,6 +8,7 @@ import typer
 from dbcli import __version__
 from dbcli.errors import DbcliError, Diagnostic, ExitCode
 from dbcli.history import format_history, format_run_record, get_run_record, read_run_records
+from dbcli.mysql import check_profile_connection
 from dbcli.output import (
     OutputConfig,
     build_output_config,
@@ -16,7 +17,7 @@ from dbcli.output import (
     merge_output_config,
     result_envelope,
 )
-from dbcli.profiles import add_profile, list_profiles, remove_profile
+from dbcli.profiles import add_profile, list_profiles, remove_profile, resolve_profile
 from dbcli.project import init_project, load_project_config
 from dbcli.recipes import (
     dump_recipe_dict,
@@ -321,8 +322,29 @@ def profile_test(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    del name
-    _not_implemented(ctx, "profile test", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        profile = resolve_profile(name)
+        check_profile_connection(profile)
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "profile test", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    _emit_success(
+        ctx,
+        "profile test",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        profile=profile.name,
+        extra={
+            "ok": True,
+            "profile_data": {
+                "name": profile.name,
+                "host": profile.host,
+                "port": profile.port,
+                "user": profile.user,
+                "database": profile.database,
+            },
+        },
+    )
 
 
 @app.command()
