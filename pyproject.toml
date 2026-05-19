@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dbcli"
+version = "0.1.0"
+description = "Recipe-first CSV/XLSX to MySQL loading CLI."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "typer>=0.12,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
+[project.scripts]
+dbcli = "dbcli.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dbcli*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
