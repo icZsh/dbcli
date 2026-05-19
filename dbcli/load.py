@@ -30,6 +30,17 @@ class LoadAdapter(Protocol):
     ) -> int:
         ...
 
+    def replace_rows(
+        self,
+        table: str,
+        schema: list[SchemaColumn],
+        dataframe: pl.DataFrame,
+        settings: Any,
+        *,
+        run_id: str,
+    ) -> int:
+        ...
+
 
 @dataclass(frozen=True)
 class LoadResult:
@@ -169,10 +180,12 @@ def _dispatch_load(adapter: LoadAdapter, recipe: Recipe, validation: ValidationR
     mode = recipe.target["mode"]
     if mode == "append":
         return adapter.append_rows(table, recipe.schema, validation.dataframe, settings)
+    if mode == "replace":
+        return adapter.replace_rows(table, recipe.schema, validation.dataframe, settings, run_id=validation.run_id)
     raise DbcliError(
         Diagnostic(
             code="load.unsupported_mode",
-            message=f"Load mode `{mode}` is not implemented yet.",
+            message=f"Load mode `{mode}` is not implemented.",
             path="target.mode",
             details={"mode": mode},
         ),
