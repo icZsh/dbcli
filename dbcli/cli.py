@@ -7,6 +7,7 @@ import typer
 
 from dbcli import __version__
 from dbcli.errors import DbcliError, Diagnostic, ExitCode
+from dbcli.history import format_history, format_run_record, get_run_record, read_run_records
 from dbcli.output import (
     OutputConfig,
     build_output_config,
@@ -136,6 +137,8 @@ def _emit_success(
     json_output: bool,
     no_progress: bool,
     ci: bool,
+    run_id: str | None = None,
+    recipe_name: str | None = None,
     profile: str | None = None,
     table: str | None = None,
     mode: str | None = None,
@@ -151,6 +154,8 @@ def _emit_success(
     payload = result_envelope(
         status="success",
         command=command,
+        run_id=run_id,
+        recipe=recipe_name,
         profile=profile,
         table=table,
         mode=mode,
@@ -484,8 +489,19 @@ def history(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    del table, limit
-    _not_implemented(ctx, "history", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        records = read_run_records(table=table, limit=limit)
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "history", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    _emit_success(
+        ctx,
+        "history",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        extra={"records": records},
+        human_stdout=format_history(records),
+    )
 
 
 @app.command()
@@ -496,8 +512,24 @@ def show(
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
-    del run_id
-    _not_implemented(ctx, "show", json_output=json_output, no_progress=no_progress, ci=ci)
+    try:
+        record = get_run_record(run_id)
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "show", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+    _emit_success(
+        ctx,
+        "show",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        run_id=str(record.get("run_id")) if record.get("run_id") is not None else None,
+        recipe_name=str(record.get("recipe")) if record.get("recipe") is not None else None,
+        profile=str(record.get("profile")) if record.get("profile") is not None else None,
+        table=str(record.get("table")) if record.get("table") is not None else None,
+        mode=str(record.get("mode")) if record.get("mode") is not None else None,
+        extra={"record": record},
+        human_stdout=format_run_record(record),
+    )
 
 
 def run() -> None:
