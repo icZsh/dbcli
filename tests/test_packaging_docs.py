@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tomllib
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -24,10 +25,20 @@ def test_ci_workflow_runs_tests_and_builds_distribution() -> None:
     assert '"3.12"' in workflow
 
 
+def test_manifest_includes_readme_demo_assets() -> None:
+    manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+
+    assert "include README.md" in manifest
+    assert "recursive-include docs *.svg" in manifest
+
+
 def test_readme_documents_operator_workflow() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     for expected in [
+        "![dbcli quickstart demo](docs/assets/dbcli-quickstart.svg)",
+        "Why dbcli",
+        "Quickstart",
         "dbcli init",
         "dbcli profile add",
         "dbcli validate",
@@ -38,3 +49,11 @@ def test_readme_documents_operator_workflow() -> None:
         "Exit Codes",
     ]:
         assert expected in readme
+
+
+def test_readme_demo_asset_is_valid_svg() -> None:
+    asset = ROOT / "docs/assets/dbcli-quickstart.svg"
+
+    assert asset.exists()
+    root = ET.parse(asset).getroot()
+    assert root.tag.endswith("svg")
