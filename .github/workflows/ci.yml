@@ -35,3 +35,37 @@ jobs:
 
       - name: Build source and wheel distributions
         run: python -m build
+
+  mysql-integration:
+    name: Live MySQL integration
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: dbcli
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pdbcli"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package and test dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run live MySQL tests
+        env:
+          DBCLI_MYSQL_INTEGRATION_URL: mysql+pymysql://root:dbcli@127.0.0.1:3306/mysql
+        run: python -m pytest tests/test_mysql_integration.py -m mysql

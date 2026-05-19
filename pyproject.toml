@@ -33,3 +33,6 @@ include = ["dbcli*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "mysql: tests that require DBCLI_MYSQL_INTEGRATION_URL and a live MySQL server",
+]
