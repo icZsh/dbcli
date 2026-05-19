@@ -150,7 +150,7 @@ def detect_csv_encoding(path: Path) -> str:
     return "utf-8"
 
 
-def detect_csv_delimiter(path: Path, encoding: str) -> str:
+def detect_csv_delimiter(path: Path, encoding: str, *, require_confident: bool = False) -> str:
     sample = _read_text(path, encoding)[:8192]
     if not sample:
         raise _source_error("source.empty", "Source file is empty.", path)
@@ -158,6 +158,12 @@ def detect_csv_delimiter(path: Path, encoding: str) -> str:
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=CSV_DETECTION_DELIMITERS)
     except csv.Error:
+        if require_confident:
+            raise _source_error(
+                "source.csv_detection_failed",
+                "Could not confidently detect CSV delimiter.",
+                path,
+            )
         return _fallback_delimiter(sample)
     return dialect.delimiter
 
