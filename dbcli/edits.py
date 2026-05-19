@@ -32,6 +32,8 @@ class EditResult:
     dataframe: pl.DataFrame
     rejects: list[RejectRecord]
     original_columns: list[str]
+    row_indices: list[int]
+    original_rows_by_index: dict[int, dict[str, Any]]
 
     @property
     def rejected_row_indices(self) -> set[int]:
@@ -76,6 +78,8 @@ def apply_edit_pipeline(
         dataframe=working.drop(INTERNAL_ROW_INDEX),
         rejects=rejects,
         original_columns=original_columns,
+        row_indices=[int(value) for value in working[INTERNAL_ROW_INDEX].to_list()],
+        original_rows_by_index={index: dict(row) for index, row in original_by_index.items()},
     )
 
 
