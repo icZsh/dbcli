@@ -37,7 +37,22 @@ Create a dbcli project in the directory that owns your data recipes:
 dbcli init
 ```
 
-This creates:
+This creates a project-local `.dbcli/` directory and a default MySQL profile. The profile uses:
+
+- host: `localhost`
+- port: `3306`
+- user: `dbcli`
+- database: a safe name derived from the current directory, for example `Company Data` becomes `company_data`
+- password: a generated value stored in macOS Keychain
+
+The generated password is never written to `profiles.toml`.
+After writing the profile, `dbcli init` tries to provision local MySQL with admin user `root` and no admin password. When that works, it creates the database, creates or updates the `dbcli` user, grants access, and verifies the default profile.
+If MySQL is not running, `dbcli init` leaves setup in place and prints a hint to start it, for example `brew services start mysql`, before retrying provisioning. It does not start background services automatically.
+If local admin access needs a password, initialization still succeeds and prints a follow-up provisioning command:
+
+```bash
+dbcli mysql provision --admin-user root
+```
 
 ```text
 .dbcli/
@@ -47,19 +62,6 @@ This creates:
 ├── recipes/
 ├── rejects/
 └── runs.jsonl
-```
-
-Add a MySQL profile. Passwords are stored as environment-variable references, not literal secrets:
-
-```bash
-dbcli profile add dev \
-  --host localhost \
-  --user dbcli \
-  --database ecom_dev \
-  --password-env DBCLI_DEV_PW
-
-export DBCLI_DEV_PW='your-password'
-dbcli profile test dev
 ```
 
 Recommended `.gitignore` entries:
@@ -86,7 +88,6 @@ Generate a starter recipe:
 ```bash
 dbcli scan data/sellers.csv \
   --table dim_sellers \
-  --profile dev \
   --encoding utf-8 \
   --delimiter ","
 ```
@@ -100,7 +101,7 @@ source:
   encoding: utf-8
   delimiter: ","
 target:
-  profile: dev
+  profile: default
   table: dim_sellers
   mode: append
   charset: utf8mb4
@@ -127,6 +128,8 @@ Load into MySQL:
 ```bash
 dbcli load dim_sellers
 ```
+
+If `dbcli load` cannot find a recipe, run `dbcli scan .` first to generate recipes for supported CSV/XLSX files in the project.
 
 For CI, add `--ci --json`:
 
@@ -173,12 +176,14 @@ MySQL load failures are reported as structured diagnostics, not reject rows.
 
 | Command | What it does |
 |---|---|
-| `dbcli init` | Creates the local `.dbcli/` project structure. |
-| `dbcli profile add dev --host localhost --user dbcli --database ecom_dev --password-env DBCLI_DEV_PW` | Adds a MySQL profile that reads its password from `DBCLI_DEV_PW`. |
-| `dbcli profile test dev` | Connects to MySQL with the `dev` profile and runs `SELECT 1`. |
+| `dbcli init` | Creates the local `.dbcli/` project structure and a default MySQL profile. |
+| `dbcli init --host 127.0.0.1 --user loader --database warehouse` | Creates the default profile with explicit connection values. |
+| `dbcli init --no-provision` | Creates local dbcli files and credentials without touching MySQL. |
+| `dbcli mysql provision --admin-user root` | Creates the configured MySQL database/user using admin authorization. |
+| `dbcli profile test` | Connects to MySQL with the default profile and runs `SELECT 1`. |
 | `dbcli inspect data/sellers.csv --encoding utf-8 --delimiter ","` | Reads source metadata, headers, row count, and a preview. |
-| `dbcli scan data/sellers.csv --table dim_sellers --profile dev --encoding utf-8 --delimiter ","` | Generates `.dbcli/recipes/dim_sellers.yaml` from the source file. |
-| `dbcli scan data --profile dev --encoding utf-8 --delimiter ","` | Generates recipes for all CSV/XLSX files directly under `data/`. |
+| `dbcli scan data/sellers.csv --table dim_sellers --encoding utf-8 --delimiter ","` | Generates `.dbcli/recipes/dim_sellers.yaml` from the source file. |
+| `dbcli scan data --encoding utf-8 --delimiter ","` | Generates recipes for all CSV/XLSX files directly under `data/`. |
 | `dbcli recipes list` | Lists recipes found in `.dbcli/recipes/`. |
 | `dbcli recipes show dim_sellers` | Prints the resolved recipe YAML for `dim_sellers`. |
 | `dbcli validate dim_sellers` | Applies edits and validates rows without connecting to MySQL. |

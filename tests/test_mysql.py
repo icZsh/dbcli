@@ -21,9 +21,12 @@ from dbcli.db.mysql import (
     insert_sql,
     mysql_url,
     parse_identifier,
+    provision_mysql_profile,
+    provision_profile_sql,
     quote_identifier,
     rename_tables_sql,
 )
+from dbcli.db.mysql import MysqlProvisionResult
 from dbcli.project.profiles import ResolvedProfile
 from dbcli.project import ResolvedSettings
 from dbcli.recipes.schema import parse_schema_columns
@@ -89,6 +92,90 @@ def test_create_table_and_insert_sql_are_safe_and_ordered() -> None:
     )
     assert insert_sql("analytics.dim_sellers", ["seller_id", "tier"]) == (
         "INSERT INTO `analytics`.`dim_sellers` (`seller_id`, `tier`) VALUES (:seller_id, :tier)"
+    )
+
+
+def test_provision_profile_sql_creates_database_user_and_grant() -> None:
+    assert provision_profile_sql(_profile(password="pa's\\word")) == [
+        "CREATE DATABASE IF NOT EXISTS `ecom_dev`",
+        "CREATE USER IF NOT EXISTS 'dbcli'@'localhost' IDENTIFIED BY 'pa''s\\\\word'",
+        "ALTER USER 'dbcli'@'localhost' IDENTIFIED BY 'pa''s\\\\word'",
+        "GRANT ALL PRIVILEGES ON `ecom_dev`.* TO 'dbcli'@'localhost'",
+    ]
+
+
+def test_provision_mysql_profile_executes_sql_and_verifies_connection() -> None:
+    admin_engine = _FakeProvisionEngine()
+    profile_engine = _FakeEngine()
+
+    result = provision_mysql_profile(
+        _profile(password="generated"),
+        admin_user="root",
+        admin_password="admin-secret",
+        admin_engine=admin_engine,  # type: ignore[arg-type]
+        profile_engine=profile_engine,  # type: ignore[arg-type]
+    )
+
+    assert result.to_dict() == {
+        "profile": "dev",
+        "host": "localhost",
+        "port": 3306,
+        "user": "dbcli",
+        "database": "ecom_dev",
+        "admin_user": "root",
+    }
+    assert admin_engine.transaction.committed is True
+    assert admin_engine.connection.executed == provision_profile_sql(_profile(password="generated"))
+    assert profile_engine.connection.executed == ["SELECT 1"]
+
+
+def test_provision_mysql_profile_failure_is_sanitized() -> None:
+    admin_engine = _FakeProvisionEngine(error=OperationalError("CREATE USER", {}, Exception("admin-secret")))
+
+    with pytest.raises(DbcliError) as exc_info:
+        provision_mysql_profile(
+            _profile(password="generated"),
+            admin_user="root",
+            admin_password="admin-secret",
+            admin_engine=admin_engine,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.diagnostic.code == "mysql.provision_failed"
+    assert exc_info.value.diagnostic.details == {
+        "profile": "dev",
+        "host": "localhost",
+        "port": 3306,
+        "admin_user": "root",
+        "error": "OperationalError",
+        "reason": "Exception: ***",
+    }
+    assert "admin-secret" not in str(exc_info.value.diagnostic.to_dict())
+
+
+def test_provision_mysql_profile_not_running_includes_start_hint() -> None:
+    admin_engine = _FakeProvisionEngine(
+        error=OperationalError(
+            "CONNECT",
+            {},
+            Exception(2003, "Can't connect to MySQL server on 'localhost' ([Errno 61] Connection refused)"),
+        )
+    )
+
+    with pytest.raises(DbcliError) as exc_info:
+        provision_mysql_profile(
+            _profile(password="generated"),
+            admin_user="root",
+            admin_password="admin-secret",
+            admin_engine=admin_engine,  # type: ignore[arg-type]
+        )
+
+    details = exc_info.value.diagnostic.details
+    assert details["reason"] == (
+        "Exception 2003: Can't connect to MySQL server on 'localhost' ([Errno 61] Connection refused)"
+    )
+    assert details["hint"] == (
+        "MySQL is not reachable at localhost:3306. "
+        "Start it with `brew services start mysql`, then run `dbcli mysql provision --admin-user root`."
     )
 
 
@@ -314,6 +401,28 @@ def test_profile_test_cli_resolves_env_and_never_prints_password(monkeypatch) ->
     assert "actual-secret" not in result.stderr
 
 
+def test_profile_test_cli_defaults_to_keychain_profile(monkeypatch) -> None:
+    calls: list[ResolvedProfile] = []
+
+    def fake_test(profile: ResolvedProfile) -> None:
+        calls.append(profile)
+
+    monkeypatch.setattr("dbcli.cli.check_profile_connection", fake_test)
+    with runner.isolated_filesystem():
+        assert runner.invoke(app, ["init"]).exit_code == 0
+        result = runner.invoke(app, ["profile", "test", "--json", "--ci"])
+
+    assert result.exit_code == 0
+    assert calls[0].name == "default"
+    assert calls[0].host == "localhost"
+    assert calls[0].port == 3306
+    assert calls[0].user == "dbcli"
+    assert calls[0].password
+    payload = json.loads(result.stdout)
+    assert payload["profile"] == "default"
+    assert "password" not in result.stdout
+
+
 def test_profile_test_cli_missing_env_returns_30() -> None:
     with runner.isolated_filesystem():
         assert runner.invoke(app, ["init"]).exit_code == 0
@@ -342,6 +451,34 @@ def test_profile_test_cli_missing_env_returns_30() -> None:
     assert result.exit_code == 30
     payload = json.loads(result.stdout)
     assert payload["diagnostics"][0]["code"] == "profile.missing_env_var"
+
+
+def test_mysql_provision_cli_uses_default_profile(monkeypatch) -> None:
+    calls: list[tuple[ResolvedProfile, str, str]] = []
+
+    def fake_provision(profile: ResolvedProfile, *, admin_user: str, admin_password: str) -> MysqlProvisionResult:
+        calls.append((profile, admin_user, admin_password))
+        return MysqlProvisionResult(
+            profile=profile.name,
+            host=profile.host,
+            port=profile.port,
+            user=profile.user,
+            database=profile.database,
+            admin_user=admin_user,
+        )
+
+    monkeypatch.setattr("dbcli.cli.provision_mysql_profile", fake_provision)
+    with runner.isolated_filesystem():
+        assert runner.invoke(app, ["init", "--no-provision"]).exit_code == 0
+        result = runner.invoke(app, ["mysql", "provision", "--json", "--ci"])
+
+    assert result.exit_code == 0
+    assert calls[0][0].name == "default"
+    assert calls[0][1:] == ("root", "")
+    payload = json.loads(result.stdout)
+    assert payload["mysql_provisioned"] is True
+    assert payload["mysql_verified"] is True
+    assert payload["mysql"]["profile"] == "default"
 
 
 def _profile(password: str = "pw") -> ResolvedProfile:
@@ -481,6 +618,42 @@ class _FakeLoadEngine:
         self.transaction = _FakeTransaction(self.connection)
 
     def begin(self) -> _FakeTransaction:
+        return self.transaction
+
+
+class _FakeProvisionConnection:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.executed: list[str] = []
+
+    def execute(self, statement: object) -> _FakeMappingResult:
+        self.executed.append(str(statement))
+        if self.error:
+            raise self.error
+        return _FakeMappingResult([])
+
+
+class _FakeProvisionTransaction:
+    def __init__(self, connection: _FakeProvisionConnection) -> None:
+        self.connection = connection
+        self.committed = False
+        self.rolled_back = False
+
+    def __enter__(self) -> _FakeProvisionConnection:
+        return self.connection
+
+    def __exit__(self, exc_type: object, _exc: object, _tb: object) -> bool:
+        self.rolled_back = exc_type is not None
+        self.committed = exc_type is None
+        return False
+
+
+class _FakeProvisionEngine:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.connection = _FakeProvisionConnection(error=error)
+        self.transaction = _FakeProvisionTransaction(self.connection)
+
+    def begin(self) -> _FakeProvisionTransaction:
         return self.transaction
 
 

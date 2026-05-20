@@ -218,7 +218,10 @@ def resolve_recipe_path(reference: str | Path, *, paths: ProjectPaths | None = N
         "recipe.not_found",
         f"Recipe `{reference}` was not found.",
         str(paths.recipes_dir),
-        {"recipe": str(reference)},
+        {
+            "recipe": str(reference),
+            "hint": "Run `dbcli scan .` to create recipes, or `dbcli recipes list` to see available recipes.",
+        },
         exit_code=ExitCode.USAGE_OR_DRIFT,
     )
 

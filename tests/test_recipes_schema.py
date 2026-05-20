@@ -75,8 +75,6 @@ def test_scan_writes_recipe_that_round_trips_through_parser() -> None:
                 "sellers.csv",
                 "--table",
                 "dim_sellers",
-                "--profile",
-                "dev",
                 "--json",
                 "--ci",
             ],
@@ -94,6 +92,7 @@ def test_scan_writes_recipe_that_round_trips_through_parser() -> None:
         recipe = load_recipe("dim_sellers")
         assert recipe.name == "dim_sellers"
         assert recipe.target["table"] == "dim_sellers"
+        assert recipe.target["profile"] == "default"
         assert [column.name for column in recipe.schema] == ["seller_id", "tier"]
 
 

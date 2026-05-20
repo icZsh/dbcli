@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sys
 from typing import Annotated
@@ -10,7 +11,7 @@ from dbcli import __version__
 from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
 from dbcli.project.history import format_history, format_run_record, get_run_record, read_run_records
 from dbcli.db.load import format_load_report, run_load
-from dbcli.db.mysql import check_profile_connection
+from dbcli.db.mysql import check_profile_connection, provision_mysql_profile
 from dbcli.core.output import (
     OutputConfig,
     build_output_config,
@@ -19,7 +20,16 @@ from dbcli.core.output import (
     merge_output_config,
     result_envelope,
 )
-from dbcli.project.profiles import add_profile, list_profiles, remove_profile, resolve_profile
+from dbcli.project.profiles import (
+    DEFAULT_PROFILE_HOST,
+    DEFAULT_PROFILE_PORT,
+    DEFAULT_PROFILE_USER,
+    add_profile,
+    ensure_default_profile,
+    list_profiles,
+    remove_profile,
+    resolve_profile,
+)
 from dbcli.project import init_project, load_project_config
 from dbcli.recipes import (
     dump_recipe_dict,
@@ -44,8 +54,10 @@ app = typer.Typer(
 )
 profile_app = typer.Typer(help="Manage connection profiles.")
 recipes_app = typer.Typer(help="Manage recipes.")
+mysql_app = typer.Typer(help="Provision and inspect MySQL support.")
 app.add_typer(profile_app, name="profile")
 app.add_typer(recipes_app, name="recipes")
+app.add_typer(mysql_app, name="mysql")
 
 
 JsonOption = Annotated[bool, typer.Option("--json", help="Emit machine-readable result data to stdout.")]
@@ -233,16 +245,135 @@ def _emit_scan_directory_result(
         raise typer.Exit(result.exit_code)
 
 
+def _format_init_report(payload: dict[str, object]) -> str:
+    lines = [
+        f"project: {payload['project']}",
+        f"profile: {payload['profile_data']['name']}",  # type: ignore[index]
+        (
+            "mysql: provisioned"
+            if payload.get("mysql_provisioned")
+            else "mysql: not provisioned"
+        ),
+    ]
+    if payload.get("mysql_provision_command"):
+        lines.append(f"next: {payload['mysql_provision_command']}")
+    diagnostic = payload.get("mysql_provision_diagnostic")
+    if isinstance(diagnostic, dict):
+        details = diagnostic.get("details")
+        reason = details.get("reason") if isinstance(details, dict) else None
+        hint = details.get("hint") if isinstance(details, dict) else None
+        lines.append(f"reason: {reason or diagnostic.get('code')}")
+        if hint:
+            lines.append(f"hint: {hint}")
+    return "\n".join(lines)
+
+
+def _init_provision_payload(
+    *,
+    profile_name: str,
+    provision: bool,
+    admin_user: str,
+    admin_password_env: str | None,
+) -> dict[str, object]:
+    follow_up_command = f"dbcli mysql provision --admin-user {admin_user}"
+    if admin_password_env:
+        follow_up_command += f" --admin-password-env {admin_password_env}"
+
+    if not provision:
+        return {
+            "mysql_provisioned": False,
+            "mysql_verified": False,
+            "mysql_provision_skipped": True,
+            "mysql_provision_command": follow_up_command,
+        }
+
+    try:
+        profile = resolve_profile(profile_name)
+        result = provision_mysql_profile(
+            profile,
+            admin_user=admin_user,
+            admin_password=_resolve_admin_password(
+                admin_password_env=admin_password_env,
+                prompt=False,
+            ),
+        )
+    except DbcliError as exc:
+        return {
+            "mysql_provisioned": False,
+            "mysql_verified": False,
+            "mysql_provision_skipped": False,
+            "mysql_provision_command": follow_up_command,
+            "mysql_provision_diagnostic": exc.diagnostic.to_dict(),
+        }
+
+    return {
+        "mysql_provisioned": True,
+        "mysql_verified": True,
+        "mysql_provision_skipped": False,
+        "mysql": result.to_dict(),
+    }
+
+
+def _resolve_admin_password(
+    *,
+    admin_password_env: str | None,
+    prompt: bool,
+) -> str:
+    if admin_password_env:
+        if admin_password_env not in os.environ:
+            raise DbcliError(
+                Diagnostic(
+                    code="mysql.missing_admin_password_env",
+                    message=f"MySQL admin password environment variable `{admin_password_env}` is not set.",
+                    details={"env_var": admin_password_env},
+                ),
+                ExitCode.DB_OR_PROFILE_ERROR,
+            )
+        return os.environ[admin_password_env]
+
+    if prompt and sys.stdin.isatty():
+        return typer.prompt("MySQL admin password", hide_input=True, default="", show_default=False)
+
+    return ""
+
+
 @app.command()
 def init(
     ctx: typer.Context,
+    host: Annotated[str, typer.Option("--host", help="MySQL host for the default profile.")] = DEFAULT_PROFILE_HOST,
+    port: Annotated[int, typer.Option("--port", help="MySQL port for the default profile.")] = DEFAULT_PROFILE_PORT,
+    user: Annotated[str, typer.Option("--user", help="MySQL user for the default profile.")] = DEFAULT_PROFILE_USER,
+    database: Annotated[str | None, typer.Option("--database", help="MySQL database for the default profile. Defaults to the directory name.")] = None,
+    provision: Annotated[bool, typer.Option("--provision/--no-provision", help="Try to create the local MySQL database and user.")] = True,
+    admin_user: Annotated[str, typer.Option("--admin-user", help="MySQL admin user for automatic provisioning.")] = "root",
+    admin_password_env: Annotated[str | None, typer.Option("--admin-password-env", help="Environment variable containing the MySQL admin password.")] = None,
     json_output: JsonOption = False,
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
     try:
         paths, created = init_project()
+        profile, profile_created = ensure_default_profile(
+            paths,
+            host=host,
+            port=port,
+            user=user,
+            database=database,
+        )
         load_project_config(paths)
+        init_payload = {
+            "project": str(paths.root),
+            "dbcli_dir": str(paths.dbcli_dir),
+            "created": created,
+            "profile_created": profile_created,
+            "profile_data": profile.to_public_dict(),
+            **_init_provision_payload(
+                profile_name=profile.name,
+                provision=provision,
+                admin_user=admin_user,
+                admin_password_env=admin_password_env,
+            ),
+        }
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "init", exc, json_output=json_output, no_progress=no_progress, ci=ci)
     _emit_success(
@@ -251,11 +382,8 @@ def init(
         json_output=json_output,
         no_progress=no_progress,
         ci=ci,
-        extra={
-            "project": str(paths.root),
-            "dbcli_dir": str(paths.dbcli_dir),
-            "created": created,
-        },
+        extra=init_payload,
+        human_stdout=_format_init_report(init_payload),
     )
 
 
@@ -347,13 +475,14 @@ def profile_remove(
 @profile_app.command("test")
 def profile_test(
     ctx: typer.Context,
-    name: Annotated[str, typer.Argument(help="Profile name.")],
+    name: Annotated[str | None, typer.Argument(help="Profile name. Defaults to the project default profile.")] = None,
     json_output: JsonOption = False,
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
     try:
-        profile = resolve_profile(name)
+        profile_name = name or load_project_config().defaults["profile"]
+        profile = resolve_profile(profile_name)
         check_profile_connection(profile)
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "profile test", exc, json_output=json_output, no_progress=no_progress, ci=ci)
@@ -373,6 +502,47 @@ def profile_test(
                 "user": profile.user,
                 "database": profile.database,
             },
+        },
+    )
+
+
+@mysql_app.command("provision")
+def mysql_provision(
+    ctx: typer.Context,
+    profile_name: Annotated[str | None, typer.Option("--profile", help="Profile to provision. Defaults to the project default profile.")] = None,
+    admin_user: Annotated[str, typer.Option("--admin-user", help="MySQL admin user.")] = "root",
+    admin_password_env: Annotated[str | None, typer.Option("--admin-password-env", help="Environment variable containing the MySQL admin password.")] = None,
+    prompt: Annotated[bool, typer.Option("--prompt/--no-prompt", help="Prompt for the MySQL admin password when needed.")] = True,
+    json_output: JsonOption = False,
+    no_progress: NoProgressOption = False,
+    ci: CiOption = False,
+) -> None:
+    try:
+        resolved_profile_name = profile_name or load_project_config().defaults["profile"]
+        profile = resolve_profile(resolved_profile_name)
+        admin_password = _resolve_admin_password(
+            admin_password_env=admin_password_env,
+            prompt=prompt,
+        )
+        result = provision_mysql_profile(
+            profile,
+            admin_user=admin_user,
+            admin_password=admin_password,
+        )
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "mysql provision", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+
+    _emit_success(
+        ctx,
+        "mysql provision",
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
+        profile=profile.name,
+        extra={
+            "mysql_provisioned": True,
+            "mysql_verified": True,
+            "mysql": result.to_dict(),
         },
     )
 

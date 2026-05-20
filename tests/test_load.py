@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 from dbcli.cli import app
 from dbcli.core.errors import DbcliError
 from dbcli.project.history import read_run_records
-from dbcli.db.load import run_load
+from dbcli.db.load import format_load_report, run_load
 from dbcli.db.mysql import schema_drift_error
 from dbcli.project.profiles import add_profile
 from dbcli.project import ProjectPaths, init_project
@@ -82,10 +82,25 @@ def test_run_load_append_sql_error_is_profile_error_and_does_not_commit_rows(tmp
     assert result.exit_code == 30
     assert result.rows["loaded"] is None
     assert result.diagnostics[0].code == "mysql.load_failed"
+    assert result.diagnostics[0].details["reason"] == "Exception: boom"
+    assert "reason:     Exception: boom" in format_load_report(result)
     assert adapter.rows == []
     record = read_run_records(paths=paths)[0]
     assert record["exit_code"] == 30
     assert record["rows"]["loaded"] is None
+
+
+def test_run_load_missing_recipe_tells_user_to_scan_first(tmp_path: Path) -> None:
+    paths, _ = init_project(tmp_path)
+
+    result = run_load("employees_csv", paths=paths, adapter=_FakeAppendAdapter())
+
+    assert result.exit_code == 2
+    assert result.diagnostics[0].code == "recipe.not_found"
+    assert result.diagnostics[0].details["hint"] == (
+        "Run `dbcli scan .` to create recipes, or `dbcli recipes list` to see available recipes."
+    )
+    assert "hint:       Run `dbcli scan .`" in format_load_report(result)
 
 
 def test_run_load_replace_uses_replace_adapter_and_writes_loaded_rows(tmp_path: Path, monkeypatch) -> None:

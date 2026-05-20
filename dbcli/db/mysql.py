@@ -71,6 +71,26 @@ class MysqlTableInfo:
         }
 
 
+@dataclass(frozen=True)
+class MysqlProvisionResult:
+    profile: str
+    host: str
+    port: int
+    user: str
+    database: str
+    admin_user: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile": self.profile,
+            "host": self.host,
+            "port": self.port,
+            "user": self.user,
+            "database": self.database,
+            "admin_user": self.admin_user,
+        }
+
+
 def mysql_url(profile: ResolvedProfile) -> URL:
     return URL.create(
         "mysql+pymysql",
@@ -85,6 +105,35 @@ def mysql_url(profile: ResolvedProfile) -> URL:
 
 def create_mysql_engine(profile: ResolvedProfile) -> Engine:
     return create_engine(mysql_url(profile), pool_pre_ping=True)
+
+
+def admin_mysql_url(
+    profile: ResolvedProfile,
+    *,
+    admin_user: str,
+    admin_password: str,
+) -> URL:
+    return URL.create(
+        "mysql+pymysql",
+        username=admin_user,
+        password=admin_password or None,
+        host=profile.host,
+        port=profile.port,
+        database="mysql",
+        query={"charset": "utf8mb4"},
+    )
+
+
+def create_admin_mysql_engine(
+    profile: ResolvedProfile,
+    *,
+    admin_user: str,
+    admin_password: str,
+) -> Engine:
+    return create_engine(
+        admin_mysql_url(profile, admin_user=admin_user, admin_password=admin_password),
+        pool_pre_ping=True,
+    )
 
 
 def check_profile_connection(profile: ResolvedProfile, *, engine: Engine | None = None) -> None:
@@ -107,6 +156,67 @@ def check_profile_connection(profile: ResolvedProfile, *, engine: Engine | None 
     finally:
         if owned_engine:
             engine.dispose()
+
+
+def provision_mysql_profile(
+    profile: ResolvedProfile,
+    *,
+    admin_user: str = "root",
+    admin_password: str = "",
+    admin_engine: Engine | None = None,
+    profile_engine: Engine | None = None,
+) -> MysqlProvisionResult:
+    owned_engine = admin_engine is None
+    admin_engine = admin_engine or create_admin_mysql_engine(
+        profile,
+        admin_user=admin_user,
+        admin_password=admin_password,
+    )
+    try:
+        with admin_engine.begin() as connection:
+            for sql in provision_profile_sql(profile):
+                connection.execute(text(sql))
+    except SQLAlchemyError as exc:
+        details = _provision_failure_details(
+            profile,
+            admin_user=admin_user,
+            admin_password=admin_password,
+            exc=exc,
+        )
+        raise DbcliError(
+            Diagnostic(
+                code="mysql.provision_failed",
+                message=f"Could not provision local MySQL for profile `{profile.name}`.",
+                details=details,
+            ),
+            ExitCode.DB_OR_PROFILE_ERROR,
+        ) from exc
+    finally:
+        if owned_engine:
+            admin_engine.dispose()
+
+    check_profile_connection(profile, engine=profile_engine)
+    return MysqlProvisionResult(
+        profile=profile.name,
+        host=profile.host,
+        port=profile.port,
+        user=profile.user,
+        database=profile.database,
+        admin_user=admin_user,
+    )
+
+
+def provision_profile_sql(profile: ResolvedProfile) -> list[str]:
+    database = quote_name(profile.database)
+    user = _sql_string(profile.user)
+    host = _sql_string(_grant_host(profile.host))
+    password = _sql_string(profile.password)
+    return [
+        f"CREATE DATABASE IF NOT EXISTS {database}",
+        f"CREATE USER IF NOT EXISTS {user}@{host} IDENTIFIED BY {password}",
+        f"ALTER USER {user}@{host} IDENTIFIED BY {password}",
+        f"GRANT ALL PRIVILEGES ON {database}.* TO {user}@{host}",
+    ]
 
 
 def parse_identifier(value: str) -> QualifiedIdentifier:
@@ -498,6 +608,103 @@ def _identifier_error(value: Any) -> DbcliError:
         ),
         ExitCode.USAGE_OR_DRIFT,
     )
+
+
+def _grant_host(host: str) -> str:
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return "localhost"
+    return "%"
+
+
+def _sql_string(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+def _provision_failure_details(
+    profile: ResolvedProfile,
+    *,
+    admin_user: str,
+    admin_password: str,
+    exc: BaseException,
+) -> dict[str, Any]:
+    reason = _safe_exception_summary(exc, secrets=(profile.password, admin_password))
+    details: dict[str, Any] = {
+        "profile": profile.name,
+        "host": profile.host,
+        "port": profile.port,
+        "admin_user": admin_user,
+        "error": exc.__class__.__name__,
+        "reason": reason,
+    }
+    hint = _provision_failure_hint(profile, admin_user=admin_user, reason=reason)
+    if hint:
+        details["hint"] = hint
+    return details
+
+
+def _provision_failure_hint(profile: ResolvedProfile, *, admin_user: str, reason: str) -> str | None:
+    lowered = reason.lower()
+    follow_up = f"dbcli mysql provision --admin-user {admin_user}"
+    if _looks_like_mysql_unreachable(lowered):
+        if _is_local_mysql_host(profile.host):
+            return (
+                f"MySQL is not reachable at {profile.host}:{profile.port}. "
+                f"Start it with `brew services start mysql`, then run `{follow_up}`."
+            )
+        return (
+            f"MySQL is not reachable at {profile.host}:{profile.port}. "
+            f"Start MySQL or check the profile host and port, then run `{follow_up}`."
+        )
+    if "access denied" in lowered or "1045" in lowered:
+        return (
+            "MySQL rejected the admin login. "
+            f"Use an admin account you know, or set its password in an environment variable and run `{follow_up} --admin-password-env ENV_VAR`."
+        )
+    return None
+
+
+def _looks_like_mysql_unreachable(lowered_reason: str) -> bool:
+    return any(
+        marker in lowered_reason
+        for marker in (
+            "can't connect",
+            "cannot connect",
+            "connection refused",
+            "connection reset",
+            "connection timed out",
+            "lost connection",
+            "2002",
+            "2003",
+            "errno 61",
+            "errno 111",
+        )
+    )
+
+
+def _is_local_mysql_host(host: str) -> bool:
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _safe_exception_summary(exc: BaseException, *, secrets: Iterable[str] = ()) -> str:
+    original = getattr(exc, "orig", None)
+    if original is not None:
+        args = getattr(original, "args", ())
+        if len(args) >= 2:
+            return _sanitize_exception_text(f"{original.__class__.__name__} {args[0]}: {args[1]}", secrets=secrets)
+        if args:
+            return _sanitize_exception_text(f"{original.__class__.__name__}: {args[0]}", secrets=secrets)
+        return original.__class__.__name__
+    return _sanitize_exception_text(exc.__class__.__name__, secrets=secrets)
+
+
+def _sanitize_exception_text(value: object, *, secrets: Iterable[str] = ()) -> str:
+    text = str(value)
+    text = re.sub(r"(?i)(password\s*[=:]\s*)\S+", r"\1***", text)
+    text = re.sub(r"://([^:/@\s]+):([^@\s]+)@", r"://\1:***@", text)
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***")
+    return text
 
 
 def _column_definition(column: SchemaColumn) -> str:

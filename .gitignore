@@ -9,9 +9,7 @@ htmlcov/
 build/
 dist/
 .venv/
-.dbcli/profiles.toml
-.dbcli/rejects/
-.dbcli/runs.jsonl
+.dbcli/
 
 # Local planning/reference notes
 BUILD.md

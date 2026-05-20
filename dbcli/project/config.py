@@ -13,7 +13,7 @@ from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
 DBCLI_DIR = ".dbcli"
 
 CONFIG_TOML = """[defaults]
-profile = "dev"
+profile = "default"
 batch_size = 5000
 reject_threshold = 0.0
 charset = "utf8mb4"
@@ -24,16 +24,17 @@ engine = "InnoDB"
 no_progress = true
 """
 
-PROFILES_EXAMPLE_TOML = """[dev]
+PROFILES_EXAMPLE_TOML = """[default]
 host = "localhost"
 port = 3306
 user = "dbcli"
-password = "${DBCLI_DEV_PW}"
-database = "ecom_dev"
+password_provider = "keychain"
+password_key = "dbcli:/absolute/path/to/project:default"
+database = "project_directory_name"
 """
 
 BUILTIN_DEFAULTS: dict[str, Any] = {
-    "profile": "dev",
+    "profile": "default",
     "batch_size": 5000,
     "reject_threshold": 0.0,
     "charset": "utf8mb4",

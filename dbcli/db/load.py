@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -170,6 +171,14 @@ def format_load_report(result: LoadResult) -> str:
     lines = format_validation_report(_validation_view(result)).splitlines()
     rows = result.rows
     lines.append(f"  loaded:     {rows['loaded'] if rows['loaded'] is not None else 'n/a'}")
+    for diagnostic in result.diagnostics:
+        lines.append(f"  diagnostic: {diagnostic.code}: {diagnostic.message}")
+        reason = diagnostic.details.get("reason")
+        if reason:
+            lines.append(f"  reason:     {reason}")
+        hint = diagnostic.details.get("hint")
+        if hint:
+            lines.append(f"  hint:       {hint}")
     return "\n".join(lines)
 
 
@@ -330,6 +339,7 @@ def _load_failed_diagnostic(validation: ValidationResult, exc: BaseException) ->
             "table": validation.table,
             "mode": validation.mode,
             "error": exc.__class__.__name__,
+            "reason": _safe_exception_summary(exc),
         },
     )
 
@@ -354,3 +364,22 @@ def _validation_view(result: LoadResult) -> ValidationResult:
 
 def _isoformat(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _safe_exception_summary(exc: BaseException) -> str:
+    original = getattr(exc, "orig", None)
+    if original is not None:
+        args = getattr(original, "args", ())
+        if len(args) >= 2:
+            return _sanitize_exception_text(f"{original.__class__.__name__} {args[0]}: {args[1]}")
+        if args:
+            return _sanitize_exception_text(f"{original.__class__.__name__}: {args[0]}")
+        return original.__class__.__name__
+    return exc.__class__.__name__
+
+
+def _sanitize_exception_text(value: object) -> str:
+    text = str(value)
+    text = re.sub(r"(?i)(password\s*[=:]\s*)\S+", r"\1***", text)
+    text = re.sub(r"://([^:/@\s]+):([^@\s]+)@", r"://\1:***@", text)
+    return text
