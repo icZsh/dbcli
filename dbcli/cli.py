@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 from typing import Annotated
 
@@ -22,9 +23,12 @@ from dbcli.project.profiles import add_profile, list_profiles, remove_profile, r
 from dbcli.project import init_project, load_project_config
 from dbcli.recipes import (
     dump_recipe_dict,
+    format_scan_directory_result,
     format_recipe_summary,
     list_recipe_summaries,
     load_recipe,
+    ScanDirectoryResult,
+    scan_directory,
     write_starter_recipe,
 )
 from dbcli.pipeline.source import format_inspection, inspect_source
@@ -204,6 +208,31 @@ def _emit_dbcli_error(
     raise typer.Exit(error.exit_code)
 
 
+def _emit_scan_directory_result(
+    ctx: typer.Context,
+    command: str,
+    result: ScanDirectoryResult,
+    *,
+    json_output: bool,
+    no_progress: bool,
+    ci: bool,
+) -> None:
+    config = _resolve_config(ctx, json_output=json_output, no_progress=no_progress, ci=ci)
+    if not config.json_output:
+        typer.echo(format_scan_directory_result(result))
+    emit_result(result.to_payload(command=command), config)
+    if result.exit_code != ExitCode.SUCCESS:
+        log(
+            "error",
+            f"{command} completed with failures",
+            config,
+            command=command,
+            failed=result.failed,
+            exit_code=int(result.exit_code),
+        )
+        raise typer.Exit(result.exit_code)
+
+
 @app.command()
 def init(
     ctx: typer.Context,
@@ -351,17 +380,46 @@ def profile_test(
 @app.command()
 def scan(
     ctx: typer.Context,
-    file: Annotated[str, typer.Argument(help="Source CSV/XLSX file.")],
+    file: Annotated[str, typer.Argument(help="Source CSV/XLSX file, or directory to scan for supported files.")],
     sheet: Annotated[str | None, typer.Option("--sheet", help="XLSX sheet name.")] = None,
     table: Annotated[str | None, typer.Option("--table", help="Target table name.")] = None,
     profile: Annotated[str | None, typer.Option("--profile", help="Connection profile name.")] = None,
     encoding: Annotated[str | None, typer.Option("--encoding", help="CSV encoding.")] = None,
     delimiter: Annotated[str | None, typer.Option("--delimiter", help="CSV delimiter.")] = None,
+    recursive: Annotated[bool, typer.Option("--recursive", "-r", help="When scanning a directory, include subdirectories.")] = False,
     json_output: JsonOption = False,
     no_progress: NoProgressOption = False,
     ci: CiOption = False,
 ) -> None:
     try:
+        if Path(file).expanduser().is_dir():
+            if sheet is not None or table is not None:
+                raise DbcliError(
+                    Diagnostic(
+                        code="scan.directory_option_conflict",
+                        message="Directory scans do not support --sheet or --table.",
+                        path=file,
+                        details={"options": [option for option, value in {"sheet": sheet, "table": table}.items() if value is not None]},
+                    ),
+                    ExitCode.USAGE_OR_DRIFT,
+                )
+            directory_result = scan_directory(
+                file,
+                profile=profile,
+                encoding=encoding,
+                delimiter=delimiter,
+                recursive=recursive,
+            )
+            _emit_scan_directory_result(
+                ctx,
+                "scan",
+                directory_result,
+                json_output=json_output,
+                no_progress=no_progress,
+                ci=ci,
+            )
+            return
+
         recipe_path, recipe = write_starter_recipe(
             file,
             sheet=sheet,
@@ -386,6 +444,39 @@ def scan(
             "recipe_data": recipe.to_dict(),
         },
         human_stdout=str(recipe_path),
+    )
+
+
+@app.command("scan-dir")
+def scan_dir(
+    ctx: typer.Context,
+    directory: Annotated[str, typer.Argument(help="Directory to scan for CSV/XLSX files inside the current project.")],
+    profile: Annotated[str | None, typer.Option("--profile", help="Connection profile name.")] = None,
+    encoding: Annotated[str | None, typer.Option("--encoding", help="CSV encoding for scanned CSV files.")] = None,
+    delimiter: Annotated[str | None, typer.Option("--delimiter", help="CSV delimiter for scanned CSV files.")] = None,
+    recursive: Annotated[bool, typer.Option("--recursive", "-r", help="Scan supported files recursively.")] = False,
+    json_output: JsonOption = False,
+    no_progress: NoProgressOption = False,
+    ci: CiOption = False,
+) -> None:
+    try:
+        result = scan_directory(
+            directory,
+            profile=profile,
+            encoding=encoding,
+            delimiter=delimiter,
+            recursive=recursive,
+        )
+    except DbcliError as exc:
+        _emit_dbcli_error(ctx, "scan-dir", exc, json_output=json_output, no_progress=no_progress, ci=ci)
+
+    _emit_scan_directory_result(
+        ctx,
+        "scan-dir",
+        result,
+        json_output=json_output,
+        no_progress=no_progress,
+        ci=ci,
     )
 
 

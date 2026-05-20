@@ -11,13 +11,16 @@ import polars as pl
 import yaml
 
 from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
-from dbcli.project import ProjectPaths, find_project, load_project_config, resolve_settings
+from dbcli.project import DBCLI_DIR, ProjectPaths, find_project, load_project_config, resolve_settings
 from dbcli.recipes.schema import SchemaColumn, parse_schema_columns, schema_to_dict
 from dbcli.pipeline.source import (
     SourceConfig,
+    SUPPORTED_CSV_SUFFIXES,
+    SUPPORTED_XLSX_SUFFIXES,
     detect_csv_delimiter,
     detect_csv_encoding,
     detect_source_type,
+    list_xlsx_sheets,
     load_source,
 )
 
@@ -30,6 +33,7 @@ EDIT_OPS = frozenset({"rename", "drop", "trim", "parse_null", "cast", "fill_null
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MAX_IDENTIFIER_LENGTH = 64
+SUPPORTED_SCAN_SUFFIXES = SUPPORTED_CSV_SUFFIXES | SUPPORTED_XLSX_SUFFIXES
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,80 @@ class RecipeSummary:
             "profile": self.profile,
             "mode": self.mode,
         }
+
+
+@dataclass(frozen=True)
+class ScanDirectoryEntry:
+    source_path: str
+    sheet: str | None
+    status: str
+    recipe_path: str | None = None
+    recipe_name: str | None = None
+    table: str | None = None
+    recipe_data: dict[str, Any] | None = None
+    diagnostic: Diagnostic | None = None
+    exit_code: ExitCode = ExitCode.SUCCESS
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_path": self.source_path,
+            "sheet": self.sheet,
+            "status": self.status,
+            "recipe_path": self.recipe_path,
+            "recipe_name": self.recipe_name,
+            "table": self.table,
+            "recipe_data": self.recipe_data,
+            "diagnostic": self.diagnostic.to_dict() if self.diagnostic else None,
+            "exit_code": int(self.exit_code),
+        }
+
+
+@dataclass(frozen=True)
+class ScanDirectoryResult:
+    directory: str
+    recursive: bool
+    files_found: int
+    recipes_created: int
+    failed: int
+    entries: list[ScanDirectoryEntry]
+    exit_code: ExitCode
+
+    @property
+    def status(self) -> str:
+        return "success" if self.exit_code == ExitCode.SUCCESS else "failed"
+
+    @property
+    def diagnostics(self) -> list[Diagnostic]:
+        return [entry.diagnostic for entry in self.entries if entry.diagnostic is not None]
+
+    def to_payload(self, *, command: str = "scan-dir") -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "command": command,
+            "run_id": None,
+            "recipe": None,
+            "profile": None,
+            "table": None,
+            "mode": None,
+            "rows": None,
+            "rejects": None,
+            "diagnostics": [diagnostic.to_dict() for diagnostic in self.diagnostics],
+            "duration_ms": None,
+            "exit_code": int(self.exit_code),
+            "directory": self.directory,
+            "recursive": self.recursive,
+            "files_found": self.files_found,
+            "recipes_created": self.recipes_created,
+            "failed": self.failed,
+            "entries": [entry.to_dict() for entry in self.entries],
+        }
+
+
+@dataclass(frozen=True)
+class _ScanTarget:
+    source_path: Path
+    sheet: str | None
+    table: str
 
 
 def load_recipe(reference: str | Path, *, paths: ProjectPaths | None = None) -> Recipe:
@@ -246,6 +324,87 @@ def write_starter_recipe(
     return recipe_path, load_recipe(recipe_path, paths=paths)
 
 
+def scan_directory(
+    directory: str | Path,
+    *,
+    profile: str | None = None,
+    encoding: str | None = None,
+    delimiter: str | None = None,
+    recursive: bool = False,
+    paths: ProjectPaths | None = None,
+) -> ScanDirectoryResult:
+    paths = paths or find_project()
+    directory_path = _resolve_scan_directory(directory, paths)
+    source_files = _supported_source_files(directory_path, paths=paths, recursive=recursive)
+    duplicate_stems = _duplicate_stems(source_files)
+    used_tables: set[str] = set()
+    entries: list[ScanDirectoryEntry] = []
+
+    for source_file in source_files:
+        try:
+            targets = _scan_targets(source_file, duplicate_stems=duplicate_stems, used_tables=used_tables)
+        except DbcliError as exc:
+            entries.append(
+                ScanDirectoryEntry(
+                    source_path=_relative(paths.root, source_file),
+                    sheet=None,
+                    status="failed",
+                    diagnostic=exc.diagnostic,
+                    exit_code=exc.exit_code,
+                )
+            )
+            continue
+
+        for target in targets:
+            try:
+                recipe_path, recipe = write_starter_recipe(
+                    target.source_path,
+                    sheet=target.sheet,
+                    table=target.table,
+                    profile=profile,
+                    encoding=encoding,
+                    delimiter=delimiter,
+                    paths=paths,
+                )
+            except DbcliError as exc:
+                entries.append(
+                    ScanDirectoryEntry(
+                        source_path=_relative(paths.root, target.source_path),
+                        sheet=target.sheet,
+                        status="failed",
+                        table=target.table,
+                        diagnostic=exc.diagnostic,
+                        exit_code=exc.exit_code,
+                    )
+                )
+                continue
+
+            entries.append(
+                ScanDirectoryEntry(
+                    source_path=_relative(paths.root, target.source_path),
+                    sheet=target.sheet,
+                    status="created",
+                    recipe_path=_relative(paths.root, recipe_path),
+                    recipe_name=recipe.name,
+                    table=recipe.target.get("table"),
+                    recipe_data=recipe.to_dict(),
+                )
+            )
+
+    failed = sum(1 for entry in entries if entry.status == "failed")
+    created = sum(1 for entry in entries if entry.status == "created")
+    first_failure = next((entry for entry in entries if entry.status == "failed"), None)
+    return ScanDirectoryResult(
+        directory=_relative(paths.root, directory_path),
+        recursive=recursive,
+        files_found=len(source_files),
+        recipes_created=created,
+        failed=failed,
+        entries=entries,
+        exit_code=first_failure.exit_code if first_failure else ExitCode.SUCCESS,
+    )
+
+
 def dump_recipe_dict(recipe: Mapping[str, Any]) -> str:
     return yaml.safe_dump(dict(recipe), sort_keys=False, allow_unicode=False)
 
@@ -257,6 +416,26 @@ def format_recipe_summary(summaries: list[RecipeSummary]) -> str:
         f"{summary.name}\t{summary.table or ''}\t{summary.profile or ''}\t{summary.mode or ''}\t{summary.path}"
         for summary in summaries
     )
+
+
+def format_scan_directory_result(result: ScanDirectoryResult) -> str:
+    if not result.entries:
+        return f"files: {result.files_found}\ncreated: {result.recipes_created}\nfailed: {result.failed}"
+
+    lines = [
+        f"directory: {result.directory}",
+        f"files: {result.files_found}",
+        f"created: {result.recipes_created}",
+        f"failed: {result.failed}",
+    ]
+    for entry in result.entries:
+        sheet = f" [{entry.sheet}]" if entry.sheet else ""
+        if entry.status == "created":
+            lines.append(f"  created: {entry.source_path}{sheet} -> {entry.recipe_path}")
+        else:
+            code = entry.diagnostic.code if entry.diagnostic else "unknown"
+            lines.append(f"  failed:  {entry.source_path}{sheet} ({code})")
+    return "\n".join(lines)
 
 
 def _parse_source(value: object, path: Path | None) -> dict[str, Any]:
@@ -456,11 +635,103 @@ def _is_safe_identifier(value: str) -> bool:
     return len(value) <= MAX_IDENTIFIER_LENGTH and bool(IDENTIFIER_RE.fullmatch(value))
 
 
+def _resolve_scan_directory(directory: str | Path, paths: ProjectPaths) -> Path:
+    directory_path = Path(directory).expanduser()
+    directory_path = directory_path.resolve()
+
+    try:
+        directory_path.relative_to(paths.root)
+    except ValueError:
+        raise _recipe_error(
+            "scan.directory_out_of_scope",
+            "Scan directory must be inside the current dbcli project.",
+            str(directory_path),
+            {"directory": str(directory_path), "project": str(paths.root)},
+        )
+
+    if not directory_path.exists():
+        raise _recipe_error(
+            "scan.directory_not_found",
+            "Scan directory does not exist.",
+            str(directory_path),
+            {"directory": str(directory_path)},
+        )
+    if not directory_path.is_dir():
+        raise _recipe_error(
+            "scan.not_directory",
+            "Scan path must be a directory.",
+            str(directory_path),
+            {"directory": str(directory_path)},
+        )
+    return directory_path
+
+
+def _supported_source_files(directory: Path, *, paths: ProjectPaths, recursive: bool) -> list[Path]:
+    candidates = directory.rglob("*") if recursive else directory.iterdir()
+    files: list[Path] = []
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        path = candidate.resolve()
+        if _is_dbcli_path(path, paths):
+            continue
+        if path.suffix.lower() in SUPPORTED_SCAN_SUFFIXES:
+            files.append(path)
+    return sorted(files)
+
+
+def _scan_targets(source_file: Path, *, duplicate_stems: set[str], used_tables: set[str]) -> list[_ScanTarget]:
+    stem = _recipe_name(source_file.stem)
+    suffix = source_file.suffix.lower()
+    if suffix in SUPPORTED_CSV_SUFFIXES:
+        table = _unique_table_name(f"{stem}_csv" if stem in duplicate_stems else stem, used_tables)
+        return [_ScanTarget(source_path=source_file, sheet=None, table=table)]
+
+    sheets = list_xlsx_sheets(source_file)
+    if len(sheets) == 1:
+        table = _unique_table_name(f"{stem}_xlsx" if stem in duplicate_stems else stem, used_tables)
+        return [_ScanTarget(source_path=source_file, sheet=sheets[0], table=table)]
+
+    targets: list[_ScanTarget] = []
+    for sheet in sheets:
+        sheet_name = _recipe_name(sheet)
+        table = _unique_table_name(f"{stem}_{sheet_name}", used_tables)
+        targets.append(_ScanTarget(source_path=source_file, sheet=sheet, table=table))
+    return targets
+
+
+def _duplicate_stems(source_files: list[Path]) -> set[str]:
+    counts: dict[str, int] = {}
+    for source_file in source_files:
+        stem = _recipe_name(source_file.stem)
+        counts[stem] = counts.get(stem, 0) + 1
+    return {stem for stem, count in counts.items() if count > 1}
+
+
+def _unique_table_name(base: str, used_tables: set[str]) -> str:
+    return _unique_identifier(_safe_identifier(base), used_tables)
+
+
+def _is_dbcli_path(path: Path, paths: ProjectPaths) -> bool:
+    try:
+        parts = path.relative_to(paths.root).parts
+    except ValueError:
+        return False
+    return DBCLI_DIR in parts
+
+
 def _portable_source_path(source_path: Path, paths: ProjectPaths) -> str:
     try:
         return str(source_path.relative_to(paths.root))
     except ValueError:
         return str(source_path)
+
+
+def _relative(root: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
 
 
 def _path(path: Path | None, key: str) -> str:

@@ -122,6 +122,31 @@ def inspect_source(
     )
 
 
+def list_xlsx_sheets(path: Path | str) -> list[str]:
+    resolved_path = _resolve_path(path)
+    file_type = detect_source_type(resolved_path)
+    if file_type != "xlsx":
+        raise DbcliError(
+            Diagnostic(
+                code="source.unsupported_type",
+                message="Only XLSX source files have sheets.",
+                path=str(resolved_path),
+                details={"suffix": resolved_path.suffix.lower()},
+            ),
+            ExitCode.VALIDATION_ERROR,
+        )
+
+    try:
+        workbook = load_workbook(resolved_path)
+    except CalamineError as exc:
+        raise _source_error("source.read_failed", f"Could not read XLSX source: {exc}", resolved_path) from exc
+
+    sheets = list(workbook.sheet_names)
+    if not sheets:
+        raise _source_error("source.empty", "Workbook does not contain any sheets.", resolved_path)
+    return sheets
+
+
 def detect_source_type(path: Path) -> Literal["csv", "xlsx"]:
     suffix = path.suffix.lower()
     if suffix in SUPPORTED_CSV_SUFFIXES:
