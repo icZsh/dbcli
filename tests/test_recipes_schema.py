@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import html
+import os
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from typer.testing import CliRunner
@@ -137,6 +140,155 @@ def test_scan_renames_unsafe_source_headers_to_mysql_safe_schema_names() -> None
         assert validate_result.exit_code == 0
 
 
+def test_scan_dir_writes_recipes_for_supported_files_and_xlsx_sheets() -> None:
+    with runner.isolated_filesystem():
+        assert runner.invoke(app, ["init"]).exit_code == 0
+        Path("data").mkdir()
+        Path("data/companies.csv").write_text("Company ID,Name\nC001,Galaxy Tech\n", encoding="utf-8")
+        _write_xlsx(Path("data/companies.xlsx"), {"Companies": [["Company ID", "Name"], ["C002", "Cedar Data"]]})
+        _write_xlsx(
+            Path("data/workbook.xlsx"),
+            {
+                "Companies": [["Company ID", "Name"], ["C003", "Northbridge"]],
+                "Employees": [["Employee ID", "Company ID"], ["E1001", "C003"]],
+            },
+        )
+        Path("data/notes.txt").write_text("ignored\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "scan-dir",
+                "data",
+                "--profile",
+                "dev",
+                "--encoding",
+                "utf-8",
+                "--delimiter",
+                ",",
+                "--json",
+                "--ci",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["files_found"] == 3
+        assert payload["recipes_created"] == 4
+        assert payload["failed"] == 0
+        assert [entry["recipe_name"] for entry in payload["entries"]] == [
+            "companies_csv",
+            "companies_xlsx",
+            "workbook_companies",
+            "workbook_employees",
+        ]
+        assert payload["entries"][2]["sheet"] == "Companies"
+        assert payload["entries"][3]["sheet"] == "Employees"
+
+        list_result = runner.invoke(app, ["recipes", "list", "--json", "--ci"])
+        assert list_result.exit_code == 0
+        list_payload = json.loads(list_result.stdout)
+        assert [recipe["name"] for recipe in list_payload["recipes"]] == [
+            "companies_csv",
+            "companies_xlsx",
+            "workbook_companies",
+            "workbook_employees",
+        ]
+
+        validate_result = runner.invoke(app, ["validate", "workbook_employees", "--json", "--ci"])
+        assert validate_result.exit_code == 0
+
+
+def test_scan_directory_argument_scans_current_directory() -> None:
+    with runner.isolated_filesystem():
+        assert runner.invoke(app, ["init"]).exit_code == 0
+        Path("sellers.csv").write_text("Seller ID,Tier\n001,VIP\n", encoding="utf-8")
+        Path("orders.csv").write_text("Order ID,Amount\nA001,42\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                ".",
+                "--profile",
+                "dev",
+                "--encoding",
+                "utf-8",
+                "--delimiter",
+                ",",
+                "--json",
+                "--ci",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["command"] == "scan"
+        assert payload["directory"] == "."
+        assert payload["files_found"] == 2
+        assert payload["recipes_created"] == 2
+        assert [entry["recipe_name"] for entry in payload["entries"]] == ["orders", "sellers"]
+
+        validate_result = runner.invoke(app, ["validate", "sellers", "--json", "--ci"])
+        assert validate_result.exit_code == 0
+
+
+def test_scan_directory_argument_resolves_from_current_subdirectory() -> None:
+    with runner.isolated_filesystem():
+        assert runner.invoke(app, ["init"]).exit_code == 0
+        Path("data").mkdir()
+        Path("data/sellers.csv").write_text("Seller ID,Tier\n001,VIP\n", encoding="utf-8")
+        original_cwd = Path.cwd()
+        try:
+            os.chdir("data")
+            result = runner.invoke(
+                app,
+                [
+                    "scan",
+                    ".",
+                    "--profile",
+                    "dev",
+                    "--encoding",
+                    "utf-8",
+                    "--delimiter",
+                    ",",
+                    "--json",
+                    "--ci",
+                ],
+            )
+        finally:
+            os.chdir(original_cwd)
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["directory"] == "data"
+        assert payload["entries"][0]["source_path"] == "data/sellers.csv"
+        assert payload["entries"][0]["recipe_name"] == "sellers"
+
+
+def test_scan_directory_argument_rejects_single_file_options() -> None:
+    with runner.isolated_filesystem():
+        assert runner.invoke(app, ["init"]).exit_code == 0
+
+        result = runner.invoke(app, ["scan", ".", "--table", "one_table", "--json", "--ci"])
+
+        assert result.exit_code == 2
+        payload = json.loads(result.stdout)
+        assert payload["diagnostics"][0]["code"] == "scan.directory_option_conflict"
+
+
+def test_scan_dir_rejects_directories_outside_project_scope() -> None:
+    with runner.isolated_filesystem():
+        assert runner.invoke(app, ["init"]).exit_code == 0
+        Path("../outside").mkdir(exist_ok=True)
+
+        result = runner.invoke(app, ["scan-dir", "../outside", "--json", "--ci"])
+
+        assert result.exit_code == 10
+        payload = json.loads(result.stdout)
+        assert payload["diagnostics"][0]["code"] == "scan.directory_out_of_scope"
+
+
 def test_scan_fails_when_csv_delimiter_detection_is_ambiguous() -> None:
     with runner.isolated_filesystem():
         assert runner.invoke(app, ["init"]).exit_code == 0
@@ -194,3 +346,91 @@ options:
   reject_threshold: 0.0
   batch_size: 5000
 {extra}"""
+
+
+def _write_xlsx(path: Path, sheets: dict[str, list[list[object]]]) -> None:
+    with ZipFile(path, "w", ZIP_DEFLATED) as workbook:
+        workbook.writestr("[Content_Types].xml", _content_types(len(sheets)))
+        workbook.writestr(
+            "_rels/.rels",
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>""",
+        )
+        workbook.writestr("xl/workbook.xml", _workbook_xml(list(sheets)))
+        workbook.writestr("xl/_rels/workbook.xml.rels", _workbook_rels(len(sheets)))
+        for index, rows in enumerate(sheets.values(), start=1):
+            workbook.writestr(f"xl/worksheets/sheet{index}.xml", _sheet_xml(rows))
+
+
+def _content_types(sheet_count: int) -> str:
+    sheet_overrides = "".join(
+        f'<Override PartName="/xl/worksheets/sheet{index}.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        for index in range(1, sheet_count + 1)
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        f"{sheet_overrides}</Types>"
+    )
+
+
+def _workbook_xml(sheet_names: list[str]) -> str:
+    sheets = "".join(
+        f'<sheet name="{html.escape(name)}" sheetId="{index}" r:id="rId{index}"/>'
+        for index, name in enumerate(sheet_names, start=1)
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f"<sheets>{sheets}</sheets></workbook>"
+    )
+
+
+def _workbook_rels(sheet_count: int) -> str:
+    rels = "".join(
+        f'<Relationship Id="rId{index}" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        f'Target="worksheets/sheet{index}.xml"/>'
+        for index in range(1, sheet_count + 1)
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f"{rels}</Relationships>"
+    )
+
+
+def _sheet_xml(rows: list[list[object]]) -> str:
+    sheet_rows: list[str] = []
+    for row_index, row in enumerate(rows, start=1):
+        cells: list[str] = []
+        for column_index, value in enumerate(row, start=1):
+            if value is None:
+                continue
+            ref = f"{_column_name(column_index)}{row_index}"
+            if isinstance(value, int | float):
+                cells.append(f'<c r="{ref}"><v>{value}</v></c>')
+            else:
+                cells.append(f'<c r="{ref}" t="inlineStr"><is><t>{html.escape(str(value))}</t></is></c>')
+        sheet_rows.append(f'<row r="{row_index}">{"".join(cells)}</row>')
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<sheetData>{"".join(sheet_rows)}</sheetData></worksheet>'
+    )
+
+
+def _column_name(index: int) -> str:
+    name = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        name = chr(65 + remainder) + name
+    return name

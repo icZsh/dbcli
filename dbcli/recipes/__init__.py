@@ -2,14 +2,18 @@
 
 from dbcli.recipes.models import (
     Recipe,
+    ScanDirectoryEntry,
+    ScanDirectoryResult,
     RecipeSummary,
     dump_recipe_dict,
+    format_scan_directory_result,
     format_recipe_summary,
     list_recipe_files,
     list_recipe_summaries,
     load_recipe,
     parse_recipe,
     resolve_recipe_path,
+    scan_directory,
     write_starter_recipe,
 )
 from dbcli.recipes.schema import (
@@ -23,9 +27,12 @@ from dbcli.recipes.schema import (
 __all__ = [
     "MysqlType",
     "Recipe",
+    "ScanDirectoryEntry",
+    "ScanDirectoryResult",
     "RecipeSummary",
     "SchemaColumn",
     "dump_recipe_dict",
+    "format_scan_directory_result",
     "format_recipe_summary",
     "list_recipe_files",
     "list_recipe_summaries",
@@ -34,6 +41,7 @@ __all__ = [
     "parse_recipe",
     "parse_schema_columns",
     "resolve_recipe_path",
+    "scan_directory",
     "schema_to_dict",
     "write_starter_recipe",
 ]

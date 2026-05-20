@@ -178,6 +178,7 @@ MySQL load failures are reported as structured diagnostics, not reject rows.
 | `dbcli profile test dev` | Connects to MySQL with the `dev` profile and runs `SELECT 1`. |
 | `dbcli inspect data/sellers.csv --encoding utf-8 --delimiter ","` | Reads source metadata, headers, row count, and a preview. |
 | `dbcli scan data/sellers.csv --table dim_sellers --profile dev --encoding utf-8 --delimiter ","` | Generates `.dbcli/recipes/dim_sellers.yaml` from the source file. |
+| `dbcli scan data --profile dev --encoding utf-8 --delimiter ","` | Generates recipes for all CSV/XLSX files directly under `data/`. |
 | `dbcli recipes list` | Lists recipes found in `.dbcli/recipes/`. |
 | `dbcli recipes show dim_sellers` | Prints the resolved recipe YAML for `dim_sellers`. |
 | `dbcli validate dim_sellers` | Applies edits and validates rows without connecting to MySQL. |

@@ -22,6 +22,7 @@ def test_help_lists_core_commands() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
+    assert "scan-dir" in result.stdout
     assert "validate" in result.stdout
     assert "load" in result.stdout
     assert "profile" in result.stdout
