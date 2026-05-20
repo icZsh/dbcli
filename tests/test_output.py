@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import json
 
-from dbcli.output import build_output_config, emit_result, log, result_envelope
+from dbcli.core.output import build_output_config, emit_result, log, result_envelope
 
 
 class _FakeStream:

@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from dbcli.cli import app
 from dbcli.project import init_project
-from dbcli.validation import run_validate
+from dbcli.pipeline.validation import run_validate
 
 
 runner = CliRunner()

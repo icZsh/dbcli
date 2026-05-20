@@ -6,11 +6,11 @@ from typing import Annotated
 import typer
 
 from dbcli import __version__
-from dbcli.errors import DbcliError, Diagnostic, ExitCode
-from dbcli.history import format_history, format_run_record, get_run_record, read_run_records
-from dbcli.load import format_load_report, run_load
-from dbcli.mysql import check_profile_connection
-from dbcli.output import (
+from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
+from dbcli.project.history import format_history, format_run_record, get_run_record, read_run_records
+from dbcli.db.load import format_load_report, run_load
+from dbcli.db.mysql import check_profile_connection
+from dbcli.core.output import (
     OutputConfig,
     build_output_config,
     emit_result,
@@ -18,7 +18,7 @@ from dbcli.output import (
     merge_output_config,
     result_envelope,
 )
-from dbcli.profiles import add_profile, list_profiles, remove_profile, resolve_profile
+from dbcli.project.profiles import add_profile, list_profiles, remove_profile, resolve_profile
 from dbcli.project import init_project, load_project_config
 from dbcli.recipes import (
     dump_recipe_dict,
@@ -27,8 +27,8 @@ from dbcli.recipes import (
     load_recipe,
     write_starter_recipe,
 )
-from dbcli.source import format_inspection, inspect_source
-from dbcli.validation import format_validation_report, run_validate
+from dbcli.pipeline.source import format_inspection, inspect_source
+from dbcli.pipeline.validation import format_validation_report, run_validate
 
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}

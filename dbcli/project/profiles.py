@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from dbcli.errors import DbcliError, Diagnostic, ExitCode
+from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
 from dbcli.project import ProjectPaths, find_project
 
 

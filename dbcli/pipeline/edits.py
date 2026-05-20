@@ -7,9 +7,9 @@ from typing import Any, Iterable, Mapping
 
 import polars as pl
 
-from dbcli.errors import DbcliError, Diagnostic, ExitCode
-from dbcli.rejects import RejectRecord
-from dbcli.schema import SchemaColumn
+from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
+from dbcli.pipeline.rejects import RejectRecord
+from dbcli.recipes.schema import SchemaColumn
 
 
 INTERNAL_ROW_INDEX = "__dbcli_internal_row_index"

@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from dbcli.errors import DbcliError, Diagnostic, ExitCode
+from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
 from dbcli.project import ProjectPaths, find_project
 
 

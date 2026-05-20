@@ -9,11 +9,11 @@ from sqlalchemy.exc import OperationalError
 from typer.testing import CliRunner
 
 from dbcli.cli import app
-from dbcli.errors import DbcliError
-from dbcli.history import read_run_records
-from dbcli.load import run_load
-from dbcli.mysql import schema_drift_error
-from dbcli.profiles import add_profile
+from dbcli.core.errors import DbcliError
+from dbcli.project.history import read_run_records
+from dbcli.db.load import run_load
+from dbcli.db.mysql import schema_drift_error
+from dbcli.project.profiles import add_profile
 from dbcli.project import ProjectPaths, init_project
 
 

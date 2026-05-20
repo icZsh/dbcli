@@ -7,10 +7,10 @@ import pytest
 from typer.testing import CliRunner
 
 from dbcli.cli import app
-from dbcli.errors import DbcliError
+from dbcli.core.errors import DbcliError
 from dbcli.project import init_project
 from dbcli.recipes import load_recipe, parse_recipe
-from dbcli.schema import parse_mysql_type
+from dbcli.recipes.schema import parse_mysql_type
 
 
 runner = CliRunner()

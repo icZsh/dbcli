@@ -10,8 +10,8 @@ import pytest
 from typer.testing import CliRunner
 
 from dbcli.cli import app
-from dbcli.errors import DbcliError
-from dbcli.source import SourceConfig, inspect_source, load_source
+from dbcli.core.errors import DbcliError
+from dbcli.pipeline.source import SourceConfig, inspect_source, load_source
 
 
 runner = CliRunner()

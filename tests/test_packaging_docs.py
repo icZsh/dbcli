@@ -30,6 +30,9 @@ def test_manifest_includes_readme_demo_assets() -> None:
 
     assert "include README.md" in manifest
     assert "recursive-include docs *.svg" in manifest
+    assert "recursive-exclude docs *.md" in manifest
+    assert "include SPEC.md" not in manifest
+    assert "recursive-include docs *.md" not in manifest
 
 
 def test_readme_documents_operator_workflow() -> None:
@@ -49,6 +52,26 @@ def test_readme_documents_operator_workflow() -> None:
         "Exit Codes",
     ]:
         assert expected in readme
+
+
+def test_local_planning_docs_are_gitignored() -> None:
+    root_markdown = sorted(path.name for path in ROOT.glob("*.md"))
+    assert root_markdown == ["README.md"]
+
+    assert not (ROOT / "SPEC.md").exists()
+    assert not (ROOT / "BUILD.md").exists()
+    assert not (ROOT / "ROADMAP.md").exists()
+
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    for pattern in (
+        "SPEC.md",
+        "BUILD.md",
+        "ROADMAP.md",
+        "docs/spec.md",
+        "docs/build.md",
+        "docs/roadmap.md",
+    ):
+        assert pattern in gitignore
 
 
 def test_readme_demo_asset_is_valid_svg() -> None:

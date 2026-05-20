@@ -7,8 +7,8 @@ import pytest
 from typer.testing import CliRunner
 
 from dbcli.cli import app
-from dbcli.errors import DbcliError
-from dbcli.history import append_run_record, current_git_sha, get_run_record, read_run_records
+from dbcli.core.errors import DbcliError
+from dbcli.project.history import append_run_record, current_git_sha, get_run_record, read_run_records
 from dbcli.project import init_project
 
 

@@ -12,3 +12,17 @@ dist/
 .dbcli/profiles.toml
 .dbcli/rejects/
 .dbcli/runs.jsonl
+
+# Local planning/reference notes
+BUILD.md
+SPEC.md
+ROADMAP.md
+build.md
+spec.md
+roadmap.md
+docs/BUILD.md
+docs/SPEC.md
+docs/ROADMAP.md
+docs/build.md
+docs/spec.md
+docs/roadmap.md

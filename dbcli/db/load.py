@@ -10,14 +10,14 @@ from typing import Any, Protocol
 import polars as pl
 from sqlalchemy.exc import SQLAlchemyError
 
-from dbcli.errors import DbcliError, Diagnostic, ExitCode
-from dbcli.history import append_run_record, current_git_sha
-from dbcli.mysql import SqlAlchemyMysqlAdapter
-from dbcli.profiles import resolve_profile
+from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
+from dbcli.project.history import append_run_record, current_git_sha
+from dbcli.db.mysql import SqlAlchemyMysqlAdapter
+from dbcli.project.profiles import resolve_profile
 from dbcli.project import ProjectPaths, find_project, load_project_config, resolve_settings
 from dbcli.recipes import Recipe, load_recipe
-from dbcli.schema import SchemaColumn
-from dbcli.validation import ValidationResult, format_validation_report, mint_run_id, run_validate
+from dbcli.recipes.schema import SchemaColumn
+from dbcli.pipeline.validation import ValidationResult, format_validation_report, mint_run_id, run_validate
 
 
 class LoadAdapter(Protocol):

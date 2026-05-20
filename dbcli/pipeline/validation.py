@@ -10,13 +10,13 @@ from uuid import uuid4
 
 import polars as pl
 
-from dbcli.edits import EditResult, apply_edit_pipeline
-from dbcli.errors import Diagnostic, ExitCode
+from dbcli.pipeline.edits import EditResult, apply_edit_pipeline
+from dbcli.core.errors import Diagnostic, ExitCode
 from dbcli.project import ProjectPaths, find_project, load_project_config, resolve_settings
 from dbcli.recipes import Recipe, load_recipe
-from dbcli.rejects import RejectRecord, write_rejects_csv
-from dbcli.schema import SchemaColumn
-from dbcli.source import SourceConfig, load_source
+from dbcli.pipeline.rejects import RejectRecord, write_rejects_csv
+from dbcli.recipes.schema import SchemaColumn
+from dbcli.pipeline.source import SourceConfig, load_source
 
 
 INTEGER_RANGES = {

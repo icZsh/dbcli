@@ -206,5 +206,3 @@ python -m build
 
 The GitHub Actions workflow in `.github/workflows/ci.yml` runs tests and package builds on Python 3.11 and 3.12.
 It also runs a live MySQL integration job that exercises append, drift detection, rollback on SQL failure, and replace mode against a MySQL service container.
-
-The full v1 contract lives in [SPEC.md](SPEC.md). The milestone build plan lives in [BUILD.md](BUILD.md).

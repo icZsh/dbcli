@@ -8,8 +8,8 @@ from sqlalchemy.exc import OperationalError
 from typer.testing import CliRunner
 
 from dbcli.cli import app
-from dbcli.errors import DbcliError
-from dbcli.mysql import (
+from dbcli.core.errors import DbcliError
+from dbcli.db.mysql import (
     MysqlColumnInfo,
     MysqlTableInfo,
     SqlAlchemyMysqlAdapter,
@@ -24,9 +24,9 @@ from dbcli.mysql import (
     quote_identifier,
     rename_tables_sql,
 )
-from dbcli.profiles import ResolvedProfile
+from dbcli.project.profiles import ResolvedProfile
 from dbcli.project import ResolvedSettings
-from dbcli.schema import parse_schema_columns
+from dbcli.recipes.schema import parse_schema_columns
 
 
 runner = CliRunner()

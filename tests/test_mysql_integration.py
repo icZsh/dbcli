@@ -9,10 +9,10 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, URL, make_url
 
-from dbcli.errors import ExitCode
-from dbcli.history import read_run_records
-from dbcli.load import run_load
-from dbcli.profiles import add_profile
+from dbcli.core.errors import ExitCode
+from dbcli.project.history import read_run_records
+from dbcli.db.load import run_load
+from dbcli.project.profiles import add_profile
 from dbcli.project import ProjectPaths, init_project
 
 

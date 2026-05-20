@@ -10,10 +10,10 @@ from typing import Any, Mapping
 import polars as pl
 import yaml
 
-from dbcli.errors import DbcliError, Diagnostic, ExitCode
+from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
 from dbcli.project import ProjectPaths, find_project, load_project_config, resolve_settings
-from dbcli.schema import SchemaColumn, parse_schema_columns, schema_to_dict
-from dbcli.source import (
+from dbcli.recipes.schema import SchemaColumn, parse_schema_columns, schema_to_dict
+from dbcli.pipeline.source import (
     SourceConfig,
     detect_csv_delimiter,
     detect_csv_encoding,

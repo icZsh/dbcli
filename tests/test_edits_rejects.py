@@ -6,11 +6,11 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from dbcli.edits import apply_edit_pipeline
-from dbcli.errors import DbcliError
+from dbcli.pipeline.edits import apply_edit_pipeline
+from dbcli.core.errors import DbcliError
 from dbcli.project import init_project
-from dbcli.rejects import write_rejects_csv
-from dbcli.schema import parse_schema_columns
+from dbcli.pipeline.rejects import write_rejects_csv
+from dbcli.recipes.schema import parse_schema_columns
 
 
 def test_rename_drop_trim_parse_null_and_fill_null_pipeline() -> None:

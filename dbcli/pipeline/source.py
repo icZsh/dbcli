@@ -12,7 +12,7 @@ from typing import Any, Literal
 import polars as pl
 from python_calamine import CalamineError, WorksheetNotFound, load_workbook
 
-from dbcli.errors import DbcliError, Diagnostic, ExitCode
+from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
 
 
 SUPPORTED_CSV_SUFFIXES = {".csv"}

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from dbcli.errors import DbcliError, Diagnostic, ExitCode
+from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
 
 
 SchemaKind = Literal[

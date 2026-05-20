@@ -1,5 +1,3 @@
 include README.md
-include SPEC.md
-include BUILD.md
-include ROADMAP.md
 recursive-include docs *.svg
+recursive-exclude docs *.md

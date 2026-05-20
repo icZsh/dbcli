@@ -6,8 +6,8 @@ import pytest
 from typer.testing import CliRunner
 
 from dbcli.cli import app
-from dbcli.errors import DbcliError
-from dbcli.profiles import add_profile, resolve_profile
+from dbcli.core.errors import DbcliError
+from dbcli.project.profiles import add_profile, resolve_profile
 from dbcli.project import (
     CONFIG_TOML,
     PROFILES_EXAMPLE_TOML,

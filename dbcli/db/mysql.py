@@ -11,10 +11,10 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, URL
 from sqlalchemy.exc import SQLAlchemyError
 
-from dbcli.errors import DbcliError, Diagnostic, ExitCode
-from dbcli.profiles import ResolvedProfile
+from dbcli.core.errors import DbcliError, Diagnostic, ExitCode
+from dbcli.project.profiles import ResolvedProfile
 from dbcli.project import ResolvedSettings
-from dbcli.schema import SchemaColumn
+from dbcli.recipes.schema import SchemaColumn
 
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
