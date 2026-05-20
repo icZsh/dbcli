@@ -171,19 +171,19 @@ MySQL load failures are reported as structured diagnostics, not reject rows.
 
 ## Common Commands
 
-```bash
-dbcli init
-dbcli profile add dev --host localhost --user dbcli --database ecom_dev --password-env DBCLI_DEV_PW
-dbcli profile test dev
-dbcli inspect data/sellers.csv --encoding utf-8 --delimiter ","
-dbcli scan data/sellers.csv --table dim_sellers --profile dev --encoding utf-8 --delimiter ","
-dbcli recipes list
-dbcli recipes show dim_sellers
-dbcli validate dim_sellers
-dbcli load dim_sellers
-dbcli history --limit 10
-dbcli show <run-id>
-```
+| Command | What it does |
+|---|---|
+| `dbcli init` | Creates the local `.dbcli/` project structure. |
+| `dbcli profile add dev --host localhost --user dbcli --database ecom_dev --password-env DBCLI_DEV_PW` | Adds a MySQL profile that reads its password from `DBCLI_DEV_PW`. |
+| `dbcli profile test dev` | Connects to MySQL with the `dev` profile and runs `SELECT 1`. |
+| `dbcli inspect data/sellers.csv --encoding utf-8 --delimiter ","` | Reads source metadata, headers, row count, and a preview. |
+| `dbcli scan data/sellers.csv --table dim_sellers --profile dev --encoding utf-8 --delimiter ","` | Generates `.dbcli/recipes/dim_sellers.yaml` from the source file. |
+| `dbcli recipes list` | Lists recipes found in `.dbcli/recipes/`. |
+| `dbcli recipes show dim_sellers` | Prints the resolved recipe YAML for `dim_sellers`. |
+| `dbcli validate dim_sellers` | Applies edits and validates rows without connecting to MySQL. |
+| `dbcli load dim_sellers` | Validates rows, then loads them into the configured MySQL table. |
+| `dbcli history --limit 10` | Shows the most recent load run records. |
+| `dbcli show <run-id>` | Prints the full history record for one load run. |
 
 ## Exit Codes
 
