@@ -28,6 +28,8 @@ TARGET_KEYS = frozenset({"profile", "table", "mode", "charset", "collation", "en
 OPTIONS_KEYS = frozenset({"reject_threshold", "batch_size"})
 EDIT_OPS = frozenset({"rename", "drop", "trim", "parse_null", "cast", "fill_null"})
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
+IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+MAX_IDENTIFIER_LENGTH = 64
 
 
 @dataclass(frozen=True)
@@ -203,6 +205,13 @@ def write_starter_recipe(
         source_block["encoding"] = loaded.encoding
         source_block["delimiter"] = loaded.delimiter
 
+    schema_names = _safe_schema_names(loaded.dataframe.columns)
+    rename_edit = {
+        source: target
+        for source, target in zip(loaded.dataframe.columns, schema_names, strict=True)
+        if source != target
+    }
+
     raw_recipe = {
         "name": recipe_name,
         "source": source_block,
@@ -214,8 +223,8 @@ def write_starter_recipe(
             "collation": settings.collation,
             "engine": settings.engine,
         },
-        "schema": _infer_schema(loaded.dataframe),
-        "edits": [],
+        "schema": _infer_schema(loaded.dataframe, column_names=schema_names),
+        "edits": [{"rename": rename_edit}] if rename_edit else [],
         "options": {
             "reject_threshold": settings.reject_threshold,
             "batch_size": settings.batch_size,
@@ -335,10 +344,17 @@ def _parse_options(value: object, path: Path | None) -> dict[str, Any]:
     return parsed
 
 
-def _infer_schema(dataframe: pl.DataFrame) -> list[dict[str, Any]]:
+def _infer_schema(dataframe: pl.DataFrame, *, column_names: list[str] | None = None) -> list[dict[str, Any]]:
     schema: list[dict[str, Any]] = []
-    for column, dtype in zip(dataframe.columns, dataframe.dtypes, strict=True):
-        schema.append({"name": column, "type": _infer_mysql_type(dataframe[column], dtype), "nullable": True})
+    names = column_names or dataframe.columns
+    for source_column, schema_column, dtype in zip(dataframe.columns, names, dataframe.dtypes, strict=True):
+        schema.append(
+            {
+                "name": schema_column,
+                "type": _infer_mysql_type(dataframe[source_column], dtype),
+                "nullable": True,
+            }
+        )
     return schema
 
 
@@ -399,6 +415,45 @@ def _non_negative_int(value: object, key: str, path: Path | None, *, minimum: in
 def _recipe_name(value: str) -> str:
     name = SAFE_NAME_RE.sub("_", value.strip().lower()).strip("_")
     return name or "recipe"
+
+
+def _safe_schema_names(columns: list[str]) -> list[str]:
+    used: set[str] = set()
+    names: list[str] = []
+    for column in columns:
+        base = column if _is_safe_identifier(column) else _safe_identifier(column)
+        name = _unique_identifier(base, used)
+        names.append(name)
+    return names
+
+
+def _safe_identifier(value: str) -> str:
+    name = SAFE_NAME_RE.sub("_", value.strip().lower()).strip("_")
+    if not name:
+        name = "column"
+    if not re.match(r"^[A-Za-z_]", name):
+        name = f"col_{name}"
+    return _truncate_identifier(name)
+
+
+def _unique_identifier(base: str, used: set[str]) -> str:
+    base = _truncate_identifier(base) or "column"
+    candidate = base
+    suffix = 2
+    while candidate.lower() in used:
+        suffix_text = f"_{suffix}"
+        candidate = f"{_truncate_identifier(base, MAX_IDENTIFIER_LENGTH - len(suffix_text))}{suffix_text}"
+        suffix += 1
+    used.add(candidate.lower())
+    return candidate
+
+
+def _truncate_identifier(value: str, max_length: int = MAX_IDENTIFIER_LENGTH) -> str:
+    return value[:max_length].rstrip("_")
+
+
+def _is_safe_identifier(value: str) -> bool:
+    return len(value) <= MAX_IDENTIFIER_LENGTH and bool(IDENTIFIER_RE.fullmatch(value))
 
 
 def _portable_source_path(source_path: Path, paths: ProjectPaths) -> str:

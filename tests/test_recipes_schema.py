@@ -94,6 +94,49 @@ def test_scan_writes_recipe_that_round_trips_through_parser() -> None:
         assert [column.name for column in recipe.schema] == ["seller_id", "tier"]
 
 
+def test_scan_renames_unsafe_source_headers_to_mysql_safe_schema_names() -> None:
+    with runner.isolated_filesystem():
+        assert runner.invoke(app, ["init"]).exit_code == 0
+        Path("companies.csv").write_text(
+            "Company ID,Company Name,1st Value\nC001,Galaxy Tech,42\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                "companies.csv",
+                "--table",
+                "dim_companies",
+                "--profile",
+                "dev",
+                "--json",
+                "--ci",
+            ],
+        )
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["recipe_data"]["edits"] == [
+            {
+                "rename": {
+                    "Company ID": "company_id",
+                    "Company Name": "company_name",
+                    "1st Value": "col_1st_value",
+                }
+            }
+        ]
+        assert [column["name"] for column in payload["recipe_data"]["schema"]] == [
+            "company_id",
+            "company_name",
+            "col_1st_value",
+        ]
+
+        validate_result = runner.invoke(app, ["validate", "dim_companies", "--json", "--ci"])
+        assert validate_result.exit_code == 0
+
+
 def test_scan_fails_when_csv_delimiter_detection_is_ambiguous() -> None:
     with runner.isolated_filesystem():
         assert runner.invoke(app, ["init"]).exit_code == 0
