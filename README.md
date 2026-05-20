@@ -19,14 +19,14 @@ Terminal demo from a local quickstart run: initialize a project, generate a reci
 For development:
 
 ```bash
-python -m pip install -e ".[dev]"
-dbcli --version
+uv sync --dev
+uv run dbcli --version
 ```
 
-For an isolated CLI install from a checkout or built wheel:
+For an isolated CLI install from a checkout:
 
 ```bash
-pipx install .
+uv tool install .
 ```
 
 ## Setup
@@ -199,9 +199,9 @@ dbcli show <run-id>
 ## Development
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m pytest
-python -m build
+uv sync --dev
+uv run pytest
+uv build
 ```
 
 The GitHub Actions workflow in `.github/workflows/ci.yml` runs tests and package builds on Python 3.11 and 3.12.

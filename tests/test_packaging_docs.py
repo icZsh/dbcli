@@ -12,15 +12,19 @@ def test_pyproject_defines_cli_and_build_dev_dependency() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert pyproject["project"]["scripts"]["dbcli"] == "dbcli.cli:app"
-    assert "build>=1,<2" in pyproject["project"]["optional-dependencies"]["dev"]
+    assert "build>=1,<2" in pyproject["dependency-groups"]["dev"]
+    assert "pytest>=8,<9" in pyproject["dependency-groups"]["dev"]
 
 
 def test_ci_workflow_runs_tests_and_builds_distribution() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    assert 'python -m pip install -e ".[dev]"' in workflow
-    assert "python -m pytest" in workflow
-    assert "python -m build" in workflow
+    assert "astral-sh/setup-uv@v5" in workflow
+    assert "uv sync --dev" in workflow
+    assert "uv run pytest" in workflow
+    assert "uv build" in workflow
+    assert "python -m pip" not in workflow
+    assert "cache: pip" not in workflow
     assert '"3.11"' in workflow
     assert '"3.12"' in workflow
 
@@ -50,6 +54,8 @@ def test_readme_documents_operator_workflow() -> None:
         "replace",
         ".dbcli/runs.jsonl",
         "Exit Codes",
+        "uv sync --dev",
+        "uv tool install .",
     ]:
         assert expected in readme
 
