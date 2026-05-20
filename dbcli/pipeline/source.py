@@ -6,6 +6,7 @@ import csv
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
+from itertools import islice
 from pathlib import Path
 from typing import Any, Literal
 
@@ -247,7 +248,8 @@ def _load_csv(config: SourceConfig, path: Path) -> LoadedSource:
             ExitCode.VALIDATION_ERROR,
         )
 
-    rows = _read_csv_rows(path, config.encoding, config.delimiter)
+    header_limit = config.skip_rows + config.header_row
+    rows = _read_csv_rows(path, config.encoding, config.delimiter, limit=header_limit)
     header = _extract_header(rows, config, path)
 
     try:
@@ -378,10 +380,19 @@ def _extract_header(rows: list[list[Any]], config: SourceConfig, path: Path) -> 
     return header
 
 
-def _read_csv_rows(path: Path, encoding: str, delimiter: str) -> list[list[str]]:
+def _read_csv_rows(
+    path: Path,
+    encoding: str,
+    delimiter: str,
+    *,
+    limit: int | None = None,
+) -> list[list[str]]:
     try:
         with path.open(newline="", encoding=encoding) as handle:
-            return [row for row in csv.reader(handle, delimiter=delimiter)]
+            reader = csv.reader(handle, delimiter=delimiter)
+            if limit is None:
+                return list(reader)
+            return list(islice(reader, limit))
     except UnicodeError as exc:
         raise _source_error("source.encoding_failed", f"Could not decode CSV source with {encoding}.", path) from exc
     except OSError as exc:

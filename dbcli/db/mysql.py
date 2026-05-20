@@ -542,10 +542,15 @@ def insert_dataframe(
 ) -> int:
     columns = [column.name for column in schema]
     sql = text(insert_sql(table, columns))
-    rows = dataframe.select(columns).to_dicts()
-    for start in range(0, len(rows), batch_size):
-        connection.execute(sql, rows[start : start + batch_size])
-    return len(rows)
+    selected = dataframe.select(columns)
+    total = 0
+    for chunk in selected.iter_slices(batch_size):
+        rows = chunk.to_dicts()
+        if not rows:
+            continue
+        connection.execute(sql, rows)
+        total += len(rows)
+    return total
 
 
 def companion_table_name(table: str, role: str, run_id: str) -> str:
