@@ -63,7 +63,7 @@ def test_readme_documents_operator_workflow() -> None:
 
 def test_local_planning_docs_are_gitignored() -> None:
     root_markdown = sorted(path.name for path in ROOT.glob("*.md"))
-    assert root_markdown == ["README.md"]
+    assert set(root_markdown) - {"CLAUDE.md"} == {"README.md"}
 
     assert not (ROOT / "SPEC.md").exists()
     assert not (ROOT / "BUILD.md").exists()
@@ -74,6 +74,7 @@ def test_local_planning_docs_are_gitignored() -> None:
         "SPEC.md",
         "BUILD.md",
         "ROADMAP.md",
+        "CLAUDE.md",
         "docs/spec.md",
         "docs/build.md",
         "docs/roadmap.md",

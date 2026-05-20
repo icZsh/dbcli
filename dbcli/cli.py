@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import typer
 
@@ -119,7 +119,7 @@ def _not_implemented(
     json_output: bool,
     no_progress: bool,
     ci: bool,
-) -> None:
+) -> NoReturn:
     config = _resolve_config(
         ctx,
         json_output=json_output,
@@ -195,7 +195,7 @@ def _emit_dbcli_error(
     json_output: bool,
     no_progress: bool,
     ci: bool,
-) -> None:
+) -> NoReturn:
     config = _resolve_config(
         ctx,
         json_output=json_output,
@@ -376,15 +376,16 @@ def init(
         }
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "init", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    _emit_success(
-        ctx,
-        "init",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        extra=init_payload,
-        human_stdout=_format_init_report(init_payload),
-    )
+    else:
+        _emit_success(
+            ctx,
+            "init",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            extra=init_payload,
+            human_stdout=_format_init_report(init_payload),
+        )
 
 
 @profile_app.command("add")
@@ -411,15 +412,16 @@ def profile_add(
         )
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "profile add", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    _emit_success(
-        ctx,
-        "profile add",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        profile=profile.name,
-        extra={"profile_data": profile.to_public_dict()},
-    )
+    else:
+        _emit_success(
+            ctx,
+            "profile add",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            profile=profile.name,
+            extra={"profile_data": profile.to_public_dict()},
+        )
 
 
 @profile_app.command("list")
@@ -433,20 +435,20 @@ def profile_list(
         profiles = [profile.to_public_dict() for profile in list_profiles()]
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "profile list", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-
-    lines = [
-        f"{profile['name']}\t{profile['user']}@{profile['host']}:{profile['port']}/{profile['database']}"
-        for profile in profiles
-    ]
-    _emit_success(
-        ctx,
-        "profile list",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        extra={"profiles": profiles},
-        human_stdout="\n".join(lines) if lines else "",
-    )
+    else:
+        lines = [
+            f"{profile['name']}\t{profile['user']}@{profile['host']}:{profile['port']}/{profile['database']}"
+            for profile in profiles
+        ]
+        _emit_success(
+            ctx,
+            "profile list",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            extra={"profiles": profiles},
+            human_stdout="\n".join(lines) if lines else "",
+        )
 
 
 @profile_app.command("remove")
@@ -461,15 +463,16 @@ def profile_remove(
         removed = remove_profile(name)
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "profile remove", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    _emit_success(
-        ctx,
-        "profile remove",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        profile=removed.name,
-        extra={"removed": removed.to_public_dict()},
-    )
+    else:
+        _emit_success(
+            ctx,
+            "profile remove",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            profile=removed.name,
+            extra={"removed": removed.to_public_dict()},
+        )
 
 
 @profile_app.command("test")
@@ -486,24 +489,25 @@ def profile_test(
         check_profile_connection(profile)
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "profile test", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    _emit_success(
-        ctx,
-        "profile test",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        profile=profile.name,
-        extra={
-            "ok": True,
-            "profile_data": {
-                "name": profile.name,
-                "host": profile.host,
-                "port": profile.port,
-                "user": profile.user,
-                "database": profile.database,
+    else:
+        _emit_success(
+            ctx,
+            "profile test",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            profile=profile.name,
+            extra={
+                "ok": True,
+                "profile_data": {
+                    "name": profile.name,
+                    "host": profile.host,
+                    "port": profile.port,
+                    "user": profile.user,
+                    "database": profile.database,
+                },
             },
-        },
-    )
+        )
 
 
 @mysql_app.command("provision")
@@ -531,20 +535,20 @@ def mysql_provision(
         )
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "mysql provision", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-
-    _emit_success(
-        ctx,
-        "mysql provision",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        profile=profile.name,
-        extra={
-            "mysql_provisioned": True,
-            "mysql_verified": True,
-            "mysql": result.to_dict(),
-        },
-    )
+    else:
+        _emit_success(
+            ctx,
+            "mysql provision",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            profile=profile.name,
+            extra={
+                "mysql_provisioned": True,
+                "mysql_verified": True,
+                "mysql": result.to_dict(),
+            },
+        )
 
 
 @app.command()
@@ -600,21 +604,22 @@ def scan(
         )
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "scan", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    _emit_success(
-        ctx,
-        "scan",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        profile=recipe.target.get("profile"),
-        table=recipe.target.get("table"),
-        mode=recipe.target.get("mode"),
-        extra={
-            "recipe_path": str(recipe_path),
-            "recipe_data": recipe.to_dict(),
-        },
-        human_stdout=str(recipe_path),
-    )
+    else:
+        _emit_success(
+            ctx,
+            "scan",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            profile=recipe.target.get("profile"),
+            table=recipe.target.get("table"),
+            mode=recipe.target.get("mode"),
+            extra={
+                "recipe_path": str(recipe_path),
+                "recipe_data": recipe.to_dict(),
+            },
+            human_stdout=str(recipe_path),
+        )
 
 
 @app.command("scan-dir")
@@ -639,15 +644,15 @@ def scan_dir(
         )
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "scan-dir", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-
-    _emit_scan_directory_result(
-        ctx,
-        "scan-dir",
-        result,
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-    )
+    else:
+        _emit_scan_directory_result(
+            ctx,
+            "scan-dir",
+            result,
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+        )
 
 
 @recipes_app.command("list")
@@ -661,15 +666,16 @@ def recipes_list(
         summaries = list_recipe_summaries()
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "recipes list", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    _emit_success(
-        ctx,
-        "recipes list",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        extra={"recipes": [summary.to_dict() for summary in summaries]},
-        human_stdout=format_recipe_summary(summaries),
-    )
+    else:
+        _emit_success(
+            ctx,
+            "recipes list",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            extra={"recipes": [summary.to_dict() for summary in summaries]},
+            human_stdout=format_recipe_summary(summaries),
+        )
 
 
 @recipes_app.command("show")
@@ -684,18 +690,19 @@ def recipes_show(
         recipe = load_recipe(name)
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "recipes show", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    _emit_success(
-        ctx,
-        "recipes show",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        profile=recipe.target.get("profile"),
-        table=recipe.target.get("table"),
-        mode=recipe.target.get("mode"),
-        extra={"recipe_data": recipe.to_dict(), "recipe_path": str(recipe.path) if recipe.path else None},
-        human_stdout=dump_recipe_dict(recipe.to_dict()),
-    )
+    else:
+        _emit_success(
+            ctx,
+            "recipes show",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            profile=recipe.target.get("profile"),
+            table=recipe.target.get("table"),
+            mode=recipe.target.get("mode"),
+            extra={"recipe_data": recipe.to_dict(), "recipe_path": str(recipe.path) if recipe.path else None},
+            human_stdout=dump_recipe_dict(recipe.to_dict()),
+        )
 
 
 @app.command()
@@ -710,20 +717,21 @@ def validate(
         result = run_validate(recipe)
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "validate", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    config = _resolve_config(ctx, json_output=json_output, no_progress=no_progress, ci=ci)
-    if not config.json_output:
-        typer.echo(format_validation_report(result))
-    emit_result(result.to_payload(), config)
-    if result.exit_code != ExitCode.SUCCESS:
-        log(
-            "error",
-            "validation failed",
-            config,
-            command="validate",
-            recipe=result.recipe,
-            exit_code=int(result.exit_code),
-        )
-        raise typer.Exit(result.exit_code)
+    else:
+        config = _resolve_config(ctx, json_output=json_output, no_progress=no_progress, ci=ci)
+        if not config.json_output:
+            typer.echo(format_validation_report(result))
+        emit_result(result.to_payload(), config)
+        if result.exit_code != ExitCode.SUCCESS:
+            log(
+                "error",
+                "validation failed",
+                config,
+                command="validate",
+                recipe=result.recipe,
+                exit_code=int(result.exit_code),
+            )
+            raise typer.Exit(result.exit_code)
 
 
 @app.command()
@@ -738,20 +746,21 @@ def load(
         result = run_load(recipe)
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "load", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    config = _resolve_config(ctx, json_output=json_output, no_progress=no_progress, ci=ci)
-    if not config.json_output:
-        typer.echo(format_load_report(result))
-    emit_result(result.to_payload(), config)
-    if result.exit_code != ExitCode.SUCCESS:
-        log(
-            "error",
-            "load failed",
-            config,
-            command="load",
-            recipe=result.recipe,
-            exit_code=int(result.exit_code),
-        )
-        raise typer.Exit(result.exit_code)
+    else:
+        config = _resolve_config(ctx, json_output=json_output, no_progress=no_progress, ci=ci)
+        if not config.json_output:
+            typer.echo(format_load_report(result))
+        emit_result(result.to_payload(), config)
+        if result.exit_code != ExitCode.SUCCESS:
+            log(
+                "error",
+                "load failed",
+                config,
+                command="load",
+                recipe=result.recipe,
+                exit_code=int(result.exit_code),
+            )
+            raise typer.Exit(result.exit_code)
 
 
 @app.command()
@@ -769,15 +778,16 @@ def inspect(
         inspection = inspect_source(file, sheet=sheet, encoding=encoding, delimiter=delimiter)
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "inspect", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    _emit_success(
-        ctx,
-        "inspect",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        extra={"inspection": inspection.to_dict()},
-        human_stdout=format_inspection(inspection),
-    )
+    else:
+        _emit_success(
+            ctx,
+            "inspect",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            extra={"inspection": inspection.to_dict()},
+            human_stdout=format_inspection(inspection),
+        )
 
 
 @app.command()
@@ -793,15 +803,16 @@ def history(
         records = read_run_records(table=table, limit=limit)
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "history", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    _emit_success(
-        ctx,
-        "history",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        extra={"records": records},
-        human_stdout=format_history(records),
-    )
+    else:
+        _emit_success(
+            ctx,
+            "history",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            extra={"records": records},
+            human_stdout=format_history(records),
+        )
 
 
 @app.command()
@@ -816,20 +827,21 @@ def show(
         record = get_run_record(run_id)
     except DbcliError as exc:
         _emit_dbcli_error(ctx, "show", exc, json_output=json_output, no_progress=no_progress, ci=ci)
-    _emit_success(
-        ctx,
-        "show",
-        json_output=json_output,
-        no_progress=no_progress,
-        ci=ci,
-        run_id=str(record.get("run_id")) if record.get("run_id") is not None else None,
-        recipe_name=str(record.get("recipe")) if record.get("recipe") is not None else None,
-        profile=str(record.get("profile")) if record.get("profile") is not None else None,
-        table=str(record.get("table")) if record.get("table") is not None else None,
-        mode=str(record.get("mode")) if record.get("mode") is not None else None,
-        extra={"record": record},
-        human_stdout=format_run_record(record),
-    )
+    else:
+        _emit_success(
+            ctx,
+            "show",
+            json_output=json_output,
+            no_progress=no_progress,
+            ci=ci,
+            run_id=str(record.get("run_id")) if record.get("run_id") is not None else None,
+            recipe_name=str(record.get("recipe")) if record.get("recipe") is not None else None,
+            profile=str(record.get("profile")) if record.get("profile") is not None else None,
+            table=str(record.get("table")) if record.get("table") is not None else None,
+            mode=str(record.get("mode")) if record.get("mode") is not None else None,
+            extra={"record": record},
+            human_stdout=format_run_record(record),
+        )
 
 
 def run() -> None:
